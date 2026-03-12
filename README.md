@@ -145,6 +145,28 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ---
 
+## Changelog
+
+### v1.1.0
+- **Persistente Speicherung**: Memories werden jetzt in SillyTaverms `settings.json` gespeichert (server-seitig). Daten überleben Browser-Neustarts, Cache-Löschungen und SillyTavern-Neustarts zuverlässig. Localforage dient nur noch als Backup, alte Daten werden automatisch migriert.
+- **Auto-Load bei Chat-Wechsel**: Beim Wechsel des Charakters oder der Chat-Session werden gespeicherte Memories sofort automatisch geladen und im Status angezeigt (`"5 Memories geladen"`).
+- **DeepSeek-Reasoner Fix**: Vollständige Unterstützung für `deepseek-reasoner` und andere Reasoning-Modelle, die JSON-Output in `reasoning_content` statt `content` liefern. NeuroMemory umgeht SillyTaverms Standard-Pipeline und parst die rohe API-Antwort direkt.
+- **max_tokens erhöht**: Standardwert für die Extraktion auf 8192 erhöht, damit Reasoning-Modelle genug Platz für Output haben.
+- **Status-Anzeige**: Nach jeder Aktion (Extraktion, Laden, Fehler) wird ein Status direkt im Settings-Panel angezeigt.
+- **Test-Button**: Neuer "Test Extraction"-Button zum manuellen Testen der Extraktions-Pipeline direkt aus dem UI.
+
+### v1.0.0
+- Erste Version
+- 4 Speichertypen: Episodisch, Semantisch, Emotional, Relational
+- Automatische Extraktion nach jeder AI-Antwort
+- Assoziatives Speichernetzwerk mit Spreading Activation
+- Memory Decay (konfigurierbare Halbwertszeit)
+- Automatische Kontext-Injektion vor jeder Generation
+- Memory-Browser, Export/Import
+- Unterstützung für alle SillyTavern Chat-Completion-APIs
+
+---
+
 ## License
 
 MIT License — feel free to use, modify, and distribute.
