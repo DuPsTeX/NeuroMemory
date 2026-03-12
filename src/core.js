@@ -146,5 +146,6 @@ activationThreshold:0.15,
 injectionPosition:0,// IN_PROMPT
 injectionDepth:2,
 injectionRole:0,// SYSTEM
+extractionPrompt:'',// Leer = DEFAULT_EXTRACT_SYSTEM verwenden
 };
 }

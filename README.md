@@ -147,6 +147,10 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.3.0
+- **Anpassbarer Extraction-Prompt**: Unter dem "Enabled"-Schalter gibt es jetzt ein aufklappbares Panel **"Extraction Prompt"**. Dort kann der System-Prompt für die Memory-Extraktion direkt eingesehen und individuell angepasst werden. Ein "Reset to Default"-Button setzt den Prompt jederzeit auf den eingebauten Standard zurück. Der benutzerdefinierte Prompt wird persistent in den SillyTavern-Settings gespeichert.
+- **Bugfix**: `extractMemories` verwendete intern eine nicht-definierte Variable (`EXTRACT_SYSTEM`) statt der konfigurierbaren `_extractSystem`-Variable — die Extraktion verwendete daher nie den gespeicherten Prompt. Behoben.
+
 ### v1.2.0
 - **Memory-Injection fix (kritisch)**: Das Event `GENERATE_BEFORE_COMBINE_PROMPTS` feuert bei SillyTavern **nicht** für Chat-Completion-APIs (OpenAI, DeepSeek, etc.). Umgestellt auf `GENERATION_STARTED`, das für alle APIs zuverlässig feuert. Dadurch werden Memories jetzt tatsächlich in jeden Prompt injiziert.
 - **Spreading Activation**: `updateMemoryConnections()` wird nach jeder Extraktion aufgerufen, sodass Memory-zu-Memory-Verbindungen (via gemeinsame Entities) für das assoziative Netzwerk aufgebaut werden.

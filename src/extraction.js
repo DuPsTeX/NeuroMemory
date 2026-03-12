@@ -3,7 +3,7 @@ import{extractEntitiesFromText,createEntityNode,updateEntityMention}from'./entit
 import{addMemory,addEntity,getEntity}from'./store.js';
 import{eid}from'./utils.js';
 
-const EXTRACT_SYSTEM=`You are a memory extraction system. Analyze the conversation excerpt and extract discrete memories as a JSON array.
+export const DEFAULT_EXTRACT_SYSTEM=`You are a memory extraction system. Analyze the conversation excerpt and extract discrete memories as a JSON array.
 
 Each memory object must have:
 - "content": string (concise fact or event, 1-2 sentences max)
@@ -25,6 +25,10 @@ Rules:
 - Keywords should be lowercase, single words
 - Respond ONLY with a valid JSON array, no markdown, no explanation`;
 
+let _extractSystem=DEFAULT_EXTRACT_SYSTEM;
+export function setExtractionPrompt(p){_extractSystem=p&&p.trim()?p.trim():DEFAULT_EXTRACT_SYSTEM;}
+export function getExtractionPrompt(){return _extractSystem;}
+
 export function buildExtractionPrompt(messages,maxMessages=4){
 const recent=messages.slice(-maxMessages);
 let prompt='Extract memories from this conversation excerpt:\n\n';
@@ -45,7 +49,7 @@ console.log('[NM] extraction prompt built, length:',prompt.length,'chars');
 let raw;
 try{
 console.log('[NM] calling generateFn (quietPrompt)...');
-raw=await generateFn({quietPrompt:`${EXTRACT_SYSTEM}\n\n${prompt}`,skipWIAN:true,removeReasoning:false,responseLength:8192});
+raw=await generateFn({quietPrompt:`${_extractSystem}\n\n${prompt}`,skipWIAN:true,removeReasoning:false,responseLength:8192});
 console.log('[NM] generateFn returned, raw length:',raw?.length||0);
 console.log('[NM] raw response (first 500):',raw?.substring(0,500));
 }catch(e){

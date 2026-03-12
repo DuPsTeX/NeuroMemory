@@ -1,6 +1,6 @@
 import{NeuroMemoryCore,defaultSettings}from'./src/core.js';
 import{exportStore,importStore,loadStore,deleteStore,setContextGetter}from'./src/store.js';
-import{extractMemories}from'./src/extraction.js';
+import{extractMemories,setExtractionPrompt,getExtractionPrompt,DEFAULT_EXTRACT_SYSTEM}from'./src/extraction.js';
 
 const MODULE_NAME='neuro-memory';
 const core=new NeuroMemoryCore();
@@ -28,6 +28,8 @@ if(!c)return;
 const ext=c.extensionSettings[MODULE_NAME];
 if(ext)Object.assign(core.settings,ext);
 else c.extensionSettings[MODULE_NAME]=Object.assign({},defaultSettings());
+// Gespeicherten Extraction-Prompt anwenden
+setExtractionPrompt(core.settings.extractionPrompt||'');
 }
 
 function saveSettings(){
@@ -222,6 +224,23 @@ return`
 <span data-i18n="Enabled">Enabled</span>
 </label>
 </div>
+
+<div class="inline-drawer nm-prompt-drawer">
+<div class="inline-drawer-toggle inline-drawer-header nm-prompt-toggle">
+<span data-i18n="Extraction Prompt">Extraction Prompt</span>
+<div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+</div>
+<div class="inline-drawer-content">
+<textarea id="nm_extractPrompt" class="nm-prompt-textarea text_pole" rows="12" placeholder="Leer lassen für Standard-Prompt...">${escHtmlAttr(s.extractionPrompt||'')}</textarea>
+<div class="nm-prompt-actions">
+<button id="nm_resetPrompt" class="menu_button" title="Auf Standard-Prompt zurücksetzen">
+<i class="fa-solid fa-rotate-left"></i> Reset to Default
+</button>
+<span id="nm_promptHint" class="nm-prompt-hint">Leer = Standard-Prompt wird verwendet</span>
+</div>
+</div>
+</div>
+
 <div id="nm_status" class="nm-status"></div>
 
 <hr>
@@ -279,6 +298,38 @@ on('nm_showLastInjected','click',()=>showLastInjected());
 on('nm_export','click',()=>doExport());
 on('nm_import','click',()=>doImport());
 on('nm_clearAll','click',()=>doClear());
+
+// Extraction-Prompt Editor
+const promptEl=document.getElementById('nm_extractPrompt');
+if(promptEl){
+// Textarea: bei Aenderung speichern + anwenden
+promptEl.addEventListener('input',()=>{
+const val=promptEl.value.trim();
+core.settings.extractionPrompt=val;
+setExtractionPrompt(val);
+saveSettings();
+const hint=document.getElementById('nm_promptHint');
+if(hint)hint.textContent=val?'Benutzerdefinierter Prompt aktiv':'Leer = Standard-Prompt wird verwendet';
+});
+// Falls settings einen gespeicherten Prompt hat: in Textarea setzen
+if(core.settings.extractionPrompt){
+promptEl.value=core.settings.extractionPrompt;
+const hint=document.getElementById('nm_promptHint');
+if(hint)hint.textContent='Benutzerdefinierter Prompt aktiv';
+}
+}
+on('nm_resetPrompt','click',()=>{
+const promptEl=document.getElementById('nm_extractPrompt');
+if(promptEl){
+promptEl.value='';
+core.settings.extractionPrompt='';
+setExtractionPrompt('');
+saveSettings();
+const hint=document.getElementById('nm_promptHint');
+if(hint)hint.textContent='Leer = Standard-Prompt wird verwendet';
+console.log('[NM] Extraction prompt reset to default');
+}
+});
 }
 
 function updateUI(){
@@ -389,6 +440,11 @@ if(el)el.innerHTML=html;
 
 function escHtml(s){
 return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// Fuer Textarea-Inhalt: nur < > & escapen (kein quot noetig bei textContent)
+function escHtmlAttr(s){
+return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
 // Eigene Generate-Funktion die reasoning_content (DeepSeek-Reasoner) korrekt verarbeitet

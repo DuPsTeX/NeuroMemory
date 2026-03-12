@@ -25,3 +25,12 @@
 .nm-status{padding:4px 8px;margin:4px 0;font-size:.8em;color:var(--SmartThemeQuoteColor);border-radius:3px;background:var(--black10a)}
 .nm-status-error{color:#ff6b6b;background:rgba(255,50,50,.1)}
 .redWarning{color:var(--warning)!important;border-color:var(--warning)!important}
+
+/* Extraction Prompt Editor */
+.nm-prompt-drawer{margin:6px 0}
+.nm-prompt-toggle{padding:5px 8px!important;font-size:.85em;background:var(--black10a);border-radius:4px}
+.nm-prompt-textarea{width:100%!important;min-height:160px;max-height:400px;resize:vertical;font-family:monospace;font-size:.78em!important;line-height:1.4;padding:6px 8px!important;box-sizing:border-box;background:var(--black20a);color:var(--SmartThemeBodyColor);border:1px solid var(--SmartThemeBorderColor);border-radius:4px;margin:6px 0 4px}
+.nm-prompt-textarea:focus{outline:none;border-color:var(--SmartThemeQuoteColor)}
+.nm-prompt-actions{display:flex;align-items:center;gap:8px;margin:4px 0 6px}
+.nm-prompt-actions .menu_button{flex-shrink:0;font-size:.8em;padding:4px 10px}
+.nm-prompt-hint{font-size:.75em;color:var(--SmartThemeQuoteColor);opacity:.7;font-style:italic}
