@@ -1,5 +1,5 @@
 import{NeuroMemoryCore,defaultSettings}from'./src/core.js';
-import{exportStore,importStore,loadStore,deleteStore}from'./src/store.js';
+import{exportStore,importStore,loadStore,deleteStore,setContextGetter}from'./src/store.js';
 import{extractMemories}from'./src/extraction.js';
 
 const MODULE_NAME='neuro-memory';
@@ -63,10 +63,19 @@ try{
 const c=getCtx();
 const charId=getCharId(c);
 console.log('[NM] onChatChanged fired, charId:',charId);
-if(!charId){await core.unload();updateUI();return}
-await core.loadCharacter(charId,getCharName(c));
+if(!charId){
+await core.unload();
 updateUI();
-console.log('[NM] character loaded:',getCharName(c));
+setStatus('');
+return;
+}
+// Lade Charakter + Memories (aus extensionSettings oder localforage)
+await core.loadCharacter(charId,getCharName(c));
+const s=core.getStats();
+const count=s?.totalMemories||0;
+setStatus(count>0?`${count} Memories geladen`:'Bereit');
+updateUI();
+console.log('[NM] character loaded:',getCharName(c),', memories:',count);
 }catch(e){console.error('[NM] onChatChanged error',e)}
 }
 
@@ -462,6 +471,9 @@ settingsContainer.insertAdjacentHTML('beforeend',buildSettingsHTML());
 bindEvents();
 console.log('[NM] UI inserted');
 }else{console.warn('[NM] no extensions_settings2 container')}
+
+// Context-Getter an Store weitergeben (fuer persistente extensionSettings-Speicherung)
+setContextGetter(getCtx);
 
 loadSettings();
 console.log('[NM] settings loaded',JSON.stringify(core.settings).substring(0,100));
