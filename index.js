@@ -119,27 +119,32 @@ setStatus('Error: '+e.message,true);
 }
 
 function onGenerateBefore(){
-if(!core.settings.enabled)return;
+console.log('[NM] onGenerateBefore fired, enabled=',core.settings.enabled,', store=',!!core.store,', memories=',core.store?Object.keys(core.store.memories).length:0);
+if(!core.settings.enabled){console.log('[NM] inject SKIP: disabled');return;}
 const c=getCtx();
-if(!c||!c.chat||!c.chat.length)return;
+if(!c||!c.chat||!c.chat.length){console.log('[NM] inject SKIP: no chat');return;}
+
 // Letzte User-Nachricht finden
 let lastUserMsg='';
 for(let i=c.chat.length-1;i>=0;i--){
 if(c.chat[i].is_user){lastUserMsg=c.chat[i].mes;break}
 }
-if(!lastUserMsg)return;
+if(!lastUserMsg){console.log('[NM] inject SKIP: no user message found');return;}
+console.log('[NM] inject: query=',lastUserMsg.substring(0,80));
 
 const memContext=core.retrieveForMessage(lastUserMsg);
-if(!memContext)return;
+console.log('[NM] inject: memContext length=',memContext?.length||0,', lastInjected=',core.lastInjected.length);
+if(!memContext){console.log('[NM] inject SKIP: retrieveForMessage returned empty');return;}
 
+// IN_CHAT (1) mit Tiefe 2 - erscheint kurz vor dem letzten Message (besser fuer RAG)
 c.setExtensionPrompt(
 MODULE_NAME,memContext,
-core.settings.injectionPosition,
+1,// IN_CHAT
 core.settings.injectionDepth,
 false,
 core.settings.injectionRole
 );
-console.log('[NM] Injected',core.lastInjected.length,'memories');
+console.log('[NM] Injected',core.lastInjected.length,'memories into prompt (depth='+core.settings.injectionDepth+')');
 }
 
 // Test-Extraction: Pipeline manuell ausfuehren
@@ -484,7 +489,9 @@ console.log('[NM] generateFn set (nmGenerate with reasoning support)');
 c.eventSource.on(c.eventTypes.CHAT_CHANGED,onChatChanged);
 c.eventSource.on(c.eventTypes.CHAT_LOADED,onChatChanged);
 c.eventSource.on(c.eventTypes.MESSAGE_RECEIVED,onMessageReceived);
-c.eventSource.on(c.eventTypes.GENERATE_BEFORE_COMBINE_PROMPTS,onGenerateBefore);
+// GENERATION_STARTED feuert fuer ALLE APIs (inkl. OpenAI/Chat-Completions)
+// GENERATE_BEFORE_COMBINE_PROMPTS feuert NUR fuer Text-Completion-APIs - daher nicht verwendbar
+c.eventSource.on(c.eventTypes.GENERATION_STARTED,onGenerateBefore);
 console.log('[NM] events registered');
 
 // Initial laden wenn Chat bereits offen

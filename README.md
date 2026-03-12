@@ -147,6 +147,12 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.2.0
+- **Memory-Injection fix (kritisch)**: Das Event `GENERATE_BEFORE_COMBINE_PROMPTS` feuert bei SillyTavern **nicht** für Chat-Completion-APIs (OpenAI, DeepSeek, etc.). Umgestellt auf `GENERATION_STARTED`, das für alle APIs zuverlässig feuert. Dadurch werden Memories jetzt tatsächlich in jeden Prompt injiziert.
+- **Spreading Activation**: `updateMemoryConnections()` wird nach jeder Extraktion aufgerufen, sodass Memory-zu-Memory-Verbindungen (via gemeinsame Entities) für das assoziative Netzwerk aufgebaut werden.
+- **Injection-Position**: Umgestellt von `IN_PROMPT` auf `IN_CHAT` mit Tiefe 2 — Memories erscheinen direkt vor den letzten Nachrichten im Kontext (relevanter für die KI).
+- **Diagnose-Logging**: Detailliertes Logging in `onGenerateBefore` — zeigt Query, Kontext-Länge und Anzahl injizierter Memories.
+
 ### v1.1.0
 - **Persistente Speicherung**: Memories werden jetzt in SillyTaverms `settings.json` gespeichert (server-seitig). Daten überleben Browser-Neustarts, Cache-Löschungen und SillyTavern-Neustarts zuverlässig. Localforage dient nur noch als Backup, alte Daten werden automatisch migriert.
 - **Auto-Load bei Chat-Wechsel**: Beim Wechsel des Charakters oder der Chat-Session werden gespeicherte Memories sofort automatisch geladen und im Status angezeigt (`"5 Memories geladen"`).

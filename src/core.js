@@ -1,6 +1,7 @@
 import{loadStore,saveStore,createEmpty}from'./store.js';
 import{extractMemories,integrateMemories}from'./extraction.js';
 import{retrieveMemories,formatMemoryContext,reinforceMemories}from'./retrieval.js';
+import{updateMemoryConnections}from'./network.js';
 import{runConsolidation}from'./consolidation.js';
 import{now}from'./utils.js';
 
@@ -60,6 +61,7 @@ this.settings.extractContextMessages
 console.log('[NM] extractMemories returned:',newMems.length,'memories');
 if(newMems.length){
 integrateMemories(this.store,newMems);
+updateMemoryConnections(this.store);// Memory-zu-Memory Verbindungen aufbauen (fuer Spreading Activation)
 await saveStore(this.store);
 console.log(`[NM] Extracted and saved ${newMems.length} memories`);
 for(const m of newMems)console.log(`[NM]   -> [${m.type}] ${m.content.substring(0,80)}`);
