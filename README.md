@@ -2,7 +2,7 @@
 
 A persistent, AI-powered long-term memory system for SillyTavern. NeuroMemory automatically extracts, stores, and retrieves memories from your conversations — giving your AI characters a real sense of continuity and recall across sessions.
 
-![NeuroMemory Settings Panel](docs/screenshot_settings.png)
+![Settings Panel](docs/screenshot_settings.png)
 
 ---
 
@@ -16,17 +16,20 @@ A persistent, AI-powered long-term memory system for SillyTavern. NeuroMemory au
 - **Memory Browser** — View, inspect, and manage all stored memories per character directly in the UI.
 - **Export / Import** — Back up and restore memories per character as JSON files.
 - **DeepSeek-Reasoner Support** — Full compatibility with reasoning models that output in `reasoning_content` instead of `content`.
-- **Works with all SillyTavern APIs** — DeepSeek, OpenAI, Claude, OpenRouter, and all other chat-completion providers.
+- **Works with all SillyTavern APIs** — DeepSeek, OpenAI, Claude, OpenRouter, Mistral, and all other chat-completion providers.
 
 ---
 
 ## Screenshots
 
-### Settings Panel
+### Settings Panel & Stats
 ![Settings Panel](docs/screenshot_settings.png)
 
 ### Memory Browser
 ![Memory Browser](docs/screenshot_browser.png)
+
+### Entity Graph
+![Entities](docs/screenshot_entities.png)
 
 ---
 
@@ -35,8 +38,11 @@ A persistent, AI-powered long-term memory system for SillyTavern. NeuroMemory au
 ### Via SillyTavern Extension Installer (recommended)
 
 1. Open SillyTavern → Extensions (puzzle icon) → Install Extension
-2. Paste the GitHub URL of this repository
-3. Click Install
+2. Paste this URL:
+   ```
+   https://github.com/DuPsTeX/NeuroMemory
+   ```
+3. Click Install — done!
 
 ### Manual Installation
 
@@ -71,17 +77,18 @@ Next generation: relevant memories injected into context
 ### Memory Structure
 
 Each memory contains:
+
 | Field | Description |
 |---|---|
 | `content` | The memory text |
 | `type` | `episodic` / `semantic` / `emotional` / `relational` |
-| `entities` | People/places/things mentioned |
+| `entities` | People, places, things mentioned |
 | `keywords` | Searchable tags |
 | `importance` | 0.0–1.0 score |
 | `emotionalValence` | -1.0 (negative) to +1.0 (positive) |
 | `emotionalIntensity` | 0.0–1.0 strength of emotion |
 | `retrievability` | Current memory strength (decays over time) |
-| `connections` | Links to related memories/entities |
+| `connections` | Links to related memories and entities |
 
 ---
 
@@ -126,7 +133,7 @@ All settings are accessible in the SillyTavern Extensions panel under **NeuroMem
 
 ### DeepSeek-Reasoner Support
 
-DeepSeek's `deepseek-reasoner` model outputs all content in `reasoning_content` instead of `content`. NeuroMemory uses a direct API call to `/api/backends/chat-completions/generate` and parses both fields, wrapping reasoning in `<think>` tags for JSON extraction.
+DeepSeek's `deepseek-reasoner` model outputs all content in `reasoning_content` instead of `content`. NeuroMemory bypasses SillyTavern's standard `generateQuietPrompt` and makes a direct call to `/api/backends/chat-completions/generate`, parsing both `content` and `reasoning_content` from the raw response.
 
 ### Non-Blocking Design
 
@@ -145,5 +152,7 @@ MIT License — feel free to use, modify, and distribute.
 ---
 
 ## Author
+
+**DuPsTeX** — [github.com/DuPsTeX](https://github.com/DuPsTeX)
 
 Built as a SillyTavern third-party extension. Contributions welcome!
