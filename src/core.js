@@ -1,0 +1,148 @@
+import{loadStore,saveStore,createEmpty}from'./store.js';
+import{extractMemories,integrateMemories}from'./extraction.js';
+import{retrieveMemories,formatMemoryContext,reinforceMemories}from'./retrieval.js';
+import{runConsolidation}from'./consolidation.js';
+import{now}from'./utils.js';
+
+// Zentraler Controller - orchestriert alle Subsysteme
+export class NeuroMemoryCore{
+constructor(){
+this.store=null;
+this.charId=null;
+this.charName='';
+this.settings=defaultSettings();
+this.messageCounter=0;
+this.lastInjected=[];
+this.generating=false;
+this._generateFn=null;
+}
+
+setGenerateFn(fn){this._generateFn=fn}
+
+async loadCharacter(charId,charName){
+if(this.charId===charId&&this.store)return;
+if(this.store&&this.charId)await saveStore(this.store);
+this.charId=charId;
+this.charName=charName||'';
+this.store=await loadStore(charId);
+if(!this.store.characterName&&charName)this.store.characterName=charName;
+this.messageCounter=0;
+console.log(`[NM] Loaded store for ${charName}: ${Object.keys(this.store.memories).length} memories, ${Object.keys(this.store.entities).length} entities`);
+}
+
+async unload(){
+if(this.store&&this.charId)await saveStore(this.store);
+this.store=null;this.charId=null;
+}
+
+// Nach AI-Antwort: Memories extrahieren
+async onMessageReceived(chat){
+console.log('[NM] core.onMessageReceived called, chat.length:',chat?.length);
+console.log('[NM] guards: enabled=',this.settings.enabled,', store=',!!this.store,', generateFn=',!!this._generateFn,', generating=',this.generating);
+
+if(!this.settings.enabled){console.log('[NM] SKIP: disabled');return}
+if(!this.store){console.log('[NM] SKIP: no store loaded');return}
+if(!this._generateFn){console.log('[NM] SKIP: no generateFn');return}
+if(this.generating){console.log('[NM] SKIP: already generating');return}
+
+this.messageCounter++;
+const willExtract=this.messageCounter%this.settings.extractEveryN===0;
+console.log('[NM] counter:',this.messageCounter,', extractEveryN:',this.settings.extractEveryN,', willExtract:',willExtract);
+if(!willExtract)return;
+
+this.generating=true;
+try{
+console.log('[NM] calling extractMemories...');
+const newMems=await extractMemories(
+this._generateFn,chat,this.charId,
+this.settings.extractContextMessages
+);
+console.log('[NM] extractMemories returned:',newMems.length,'memories');
+if(newMems.length){
+integrateMemories(this.store,newMems);
+await saveStore(this.store);
+console.log(`[NM] Extracted and saved ${newMems.length} memories`);
+for(const m of newMems)console.log(`[NM]   -> [${m.type}] ${m.content.substring(0,80)}`);
+}else{
+console.log('[NM] No new memories extracted from this exchange');
+}
+}catch(e){console.error('[NM] extraction error',e)}
+finally{this.generating=false}
+
+// Konsolidierung periodisch
+if(this.messageCounter%this.settings.consolidateEveryN===0){
+try{
+console.log('[NM] running consolidation...');
+const r=await runConsolidation(this._generateFn,this.store,this.settings);
+await saveStore(this.store);
+console.log(`[NM] Consolidation: ${r.forgotten} forgotten, ${r.merged} merged, ${r.total} total`);
+}catch(e){console.error('[NM] consolidation error',e)}
+}
+}
+
+// Vor Generation: relevante Memories abrufen
+retrieveForMessage(message){
+if(!this.settings.enabled||!this.store)return'';
+const results=retrieveMemories(this.store,message,{
+topK:this.settings.topK,
+maxHops:this.settings.activationHops,
+decayPerHop:0.5,
+activationThreshold:this.settings.activationThreshold,
+halfLifeHours:this.settings.halfLifeDays*24,
+emotionFactor:this.settings.emotionFactor,
+});
+if(!results.length)return'';
+
+// Reinforcement
+reinforceMemories(results);
+this.lastInjected=results;
+
+return formatMemoryContext(results,this.settings.maxContextTokens);
+}
+
+// Statistiken
+getStats(){
+if(!this.store)return null;
+const mems=Object.values(this.store.memories);
+const ents=Object.values(this.store.entities);
+return{
+totalMemories:mems.length,
+totalEntities:ents.length,
+byType:{
+episodic:mems.filter(m=>m.type==='episodic').length,
+semantic:mems.filter(m=>m.type==='semantic').length,
+emotional:mems.filter(m=>m.type==='emotional').length,
+relational:mems.filter(m=>m.type==='relational').length,
+},
+avgImportance:mems.length?mems.reduce((s,m)=>s+m.importance,0)/mems.length:0,
+avgRetrievability:mems.length?mems.reduce((s,m)=>s+m.retrievability,0)/mems.length:0,
+lastConsolidation:this.store.meta.lastConsolidation,
+lastInjectedCount:this.lastInjected.length,
+};
+}
+
+getLastInjected(){return this.lastInjected}
+
+async save(){if(this.store)await saveStore(this.store)}
+}
+
+export function defaultSettings(){
+return{
+enabled:true,
+topK:10,
+maxContextTokens:500,
+maxMemories:500,
+extractEveryN:1,
+extractContextMessages:4,
+maxExtractPerExchange:5,
+halfLifeDays:30,
+emotionFactor:0.5,
+consolidateEveryN:10,
+consolidationBatch:10,
+activationHops:3,
+activationThreshold:0.15,
+injectionPosition:0,// IN_PROMPT
+injectionDepth:2,
+injectionRole:0,// SYSTEM
+};
+}
