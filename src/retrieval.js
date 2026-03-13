@@ -110,10 +110,16 @@ return scored.slice(0,topK);
 }
 
 // Formatiere Memories als Kontext-Block fuer Prompt-Injektion
-export function formatMemoryContext(results,maxTokens=500){
+// store: optional, wird fuer Digest-Prepend verwendet
+export function formatMemoryContext(results,maxTokens=500,store=null){
 if(!results.length)return'';
-let out='[Character Memory - Recalled associations]\n';
-let approxTokens=10;
+let out='';
+// Digest voranstellen wenn vorhanden
+if(store?.digest?.text){
+out+=`[Character Summary]\n${store.digest.text}\n\n`;
+}
+out+='[Character Memory - Recalled associations]\n';
+let approxTokens=Math.ceil(out.length/4);
 for(const r of results){
 const line=`- ${r.memory.content} [${r.memory.type}]\n`;
 const lineTokens=Math.ceil(line.length/4);// Grobe Schaetzung

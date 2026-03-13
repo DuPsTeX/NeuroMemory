@@ -2,6 +2,19 @@ import{now,hrs,expDecay,cosineSim,tokenize,extractKeywords}from'./utils.js';
 import{getAllMemories,removeMemory,updateMemory}from'./store.js';
 import{updateMemoryConnections}from'./network.js';
 
+const DIGEST_SYSTEM=`You are a character memory narrator. Given a list of memories about a fictional character, write a cohesive 2-3 sentence narrative summary. Focus on character essence, key relationships, and emotional state. Write in third person, present tense. Pure prose — no lists, no bullet points. Respond with ONLY the summary text, no additional formatting.`;
+
+export async function generateDigest(generateFn,store){
+const mems=getAllMemories(store).filter(m=>m.importance>=0.5||m.pinned).sort((a,b)=>b.importance-a.importance).slice(0,12);
+if(mems.length<3)return null;
+const memList=mems.map(m=>`[${m.type}] ${m.content}`).join('\n');
+const prompt=`${DIGEST_SYSTEM}\n\nMemories:\n${memList}\n\nNarrative Summary:`;
+try{
+const raw=await generateFn({quietPrompt:prompt,skipWIAN:true,removeReasoning:true,responseLength:200});
+return raw?.trim()||null;
+}catch(e){console.warn('[NM] digest generation failed',e);return null}
+}
+
 const CONSOLIDATE_SYSTEM=`You are a memory consolidation system. Given two memories, decide the operation:
 - "UPDATE": memories contain overlapping/complementary info → merge into one
 - "DELETE": new memory contradicts old → old should be removed
@@ -89,7 +102,7 @@ return ops;
 
 // Volle Konsolidierungsrunde
 export async function runConsolidation(generateFn,store,settings){
-const{halfLifeHours=720,emotionFactor=0.5,maxMemories=500,consolidationBatch=10}=settings;
+const{halfLifeHours=720,emotionFactor=0.5,maxMemories=500,consolidationBatch=10,digestEveryN=15}=settings;
 // 1. Decay anwenden
 const forgotten=applyDecay(store,halfLifeHours,emotionFactor);
 // 2. LLM-Konsolidierung
@@ -105,5 +118,12 @@ const excess=unpinned.slice(0,mems.length-maxMemories);
 for(const m of excess)removeMemory(store,m.id);
 }
 store.meta.lastConsolidation=now();
+// Digest auto-generieren falls noetig
+const memCount=Object.keys(store.memories).length;
+const lastCount=store.digest?.memCount||0;
+if(!store.digest||(memCount-lastCount)>=digestEveryN){
+const digestText=await generateDigest(generateFn,store);
+if(digestText)store.digest={text:digestText,generatedAt:now(),memCount};
+}
 return{forgotten,merged,total:Object.keys(store.memories).length};
 }

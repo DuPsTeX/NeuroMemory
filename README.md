@@ -147,6 +147,12 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.6.0
+- **Character Card Auto-Import**: Neues "📥 Aus Character Card importieren"-Panel erscheint automatisch bei Charakteren ohne Memories. Ein Klick extrahiert Backstory-Fakten (Persönlichkeit, Fähigkeiten, Beziehungen, Geschichte) direkt aus der Character Card via LLM — mit einem speziell angepassten Extraction-Prompt für Backstory (nur `semantic`/`relational` Memories, keine episodischen). Nach erfolgreichem Import verschwindet der Button dauerhaft.
+- **Memory Digest**: Der Memory Browser zeigt jetzt einen "📝 Character Summary"-Block — eine KI-generierte 2-3 Satz Narration der wichtigsten Memories. Der Digest wird **automatisch in den Prompt injiziert** (vor den Bullet-Point-Memories), sodass die KI den Charakter kontextuell erfasst. Auto-Regenerierung alle N neuen Memories (Standard: 15). Manuell mit "🔄"-Button neu generieren.
+- **Emotional Arc Timeline**: Visueller Timeline-Strip im Memory Browser — alle Memories mit emotionalem Gehalt sortiert nach Erstellungszeitpunkt als Farbbalken (grün = positiv, rot = negativ, grau = neutral, Höhe = Intensität). Zeigt den emotionalen Verlauf der Geschichte auf einen Blick.
+- **Proaktive Memory-Nutzung**: Neues optionales Setting — wenn aktiviert, wird ein kurzer System-Hinweis injiziert, der die KI auffordert, Memories natürlich in die Antwort einzubauen, ohne sie explizit als "Erinnerungen" zu labeln.
+
 ### v1.5.0
 - **Memory Pinning**: Jede Memory kann jetzt mit 📌 angepinnt werden. Gepinnte Memories werden **immer** in den Prompt injiziert (unabhängig vom Relevanz-Score), verfallen nicht durch den Decay-Algorithmus, und werden beim maxMemories-Limit nicht gelöscht. Ideal für wichtige Backstory-Fakten.
 - **Manuell Memories hinzufügen**: Neues aufklappbares "Memory manuell hinzufügen"-Panel im Debug-Bereich. Nutzer können Memories direkt eingeben (Content, Typ, Wichtigkeit, Entities) und optional sofort anpinnen. Manuell erstellte Memories sind mit ✋ markiert.

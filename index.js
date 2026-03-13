@@ -1,11 +1,27 @@
 import{NeuroMemoryCore,defaultSettings}from'./src/core.js';
 import{exportStore,importStore,loadStore,deleteStore,setContextGetter,removeMemory,saveStore,addMemory,updateMemory}from'./src/store.js';
-import{extractMemories,setExtractionPrompt,getExtractionPrompt,DEFAULT_EXTRACT_SYSTEM}from'./src/extraction.js';
+import{extractMemories,integrateMemories,setExtractionPrompt,getExtractionPrompt,DEFAULT_EXTRACT_SYSTEM}from'./src/extraction.js';
 import{uid,extractKeywords}from'./src/utils.js';
 import{updateMemoryConnections}from'./src/network.js';
 
 const MODULE_NAME='neuro-memory';
 const core=new NeuroMemoryCore();
+
+const CARD_EXTRACT_SYSTEM=`You are a memory extraction system for character backstories. Analyze this character description and extract factual memories as a JSON array.
+
+Each memory object must have:
+- "content": string (concise fact, 1-2 sentences max)
+- "type": "semantic"|"relational" (NO episodic — nothing happened yet in the story)
+- "entities": string[] (named characters, places, objects mentioned)
+- "keywords": string[] (3-8 important lowercase keywords)
+- "emotionalValence": number (-1.0 to 1.0, usually 0 for background facts)
+- "emotionalIntensity": number (0.0 to 1.0)
+- "importance": number (0.5-1.0, backstory facts are usually important)
+
+Rules:
+- Extract personality traits, abilities, relationships, history, motivations, appearance
+- Maximum 8 memories. Be concise, no fluff.
+- Respond ONLY with a valid JSON array, no markdown, no explanation`;
 
 // WICHTIG: getContext() gibt jedes Mal ein neues Snapshot-Objekt zurueck - NIE cachen!
 function getCtx(){
@@ -50,6 +66,8 @@ set('nm_maxMemories',s.maxMemories);
 set('nm_activationHops',s.activationHops);
 set('nm_activationThreshold',s.activationThreshold);
 const cb=document.getElementById('nm_enabled');if(cb)cb.checked=!!s.enabled;
+const ppCb=document.getElementById('nm_proactivePrompt');if(ppCb)ppCb.checked=!!s.proactivePrompt;
+set('nm_digestEveryN',s.digestEveryN??15);
 // Prompt-Textarea ebenfalls aktualisieren
 const promptEl=document.getElementById('nm_extractPrompt');
 if(promptEl){
@@ -109,9 +127,24 @@ console.log('[NM] character loaded:',getCharName(c),', memories:',count);
 }catch(e){console.error('[NM] onChatChanged error',e)}
 }
 
+// Flag: nur extrahieren wenn der User tatsaechlich eine neue Nachricht gesendet hat (kein Regen-Guard)
+let _userMessageSent=false;
+
+function onUserMessageSent(){
+_userMessageSent=true;
+console.log('[NM] MESSAGE_SENT: flagged for extraction');
+}
+
 // KRITISCHER FIX: Non-blocking extraction mit Delay
 function onMessageReceived(msgIdx){
 console.log('[NM] MESSAGE_RECEIVED fired, msgIdx:',msgIdx);
+
+// Regenerierungs-Guard: nur extrahieren wenn vorher eine echte User-Nachricht gesendet wurde
+if(!_userMessageSent){
+console.log('[NM] SKIP: regeneration detected (no new user message preceded this response)');
+return;
+}
+_userMessageSent=false;
 
 if(!core.settings.enabled){
 console.log('[NM] skipped: extension disabled');
@@ -175,6 +208,15 @@ false,
 core.settings.injectionRole
 );
 console.log('[NM] Injected',core.lastInjected.length,'memories into prompt (depth='+core.settings.injectionDepth+')');
+
+// Proaktive Memory-Nutzung: optionaler Hinweis ans Modell
+if(core.settings.proactivePrompt){
+const hint='[Memory Recall Active: Naturally weave relevant memories into your response without explicitly labeling them as "memories" or "recollections".]';
+c.setExtensionPrompt(MODULE_NAME+'_hint',hint,0,0,false,0);// IN_PROMPT
+console.log('[NM] injected proactive prompt hint');
+}else{
+c.setExtensionPrompt(MODULE_NAME+'_hint','',0,0,false,0);
+}
 }
 
 // Test-Extraction: Pipeline manuell ausfuehren
@@ -290,6 +332,11 @@ return`
 <label>Max memories per char <input type="number" id="nm_maxMemories" value="${s.maxMemories}" min="10" max="5000" class="text_pole nm-input"></label>
 <label>Activation hops <input type="number" id="nm_activationHops" value="${s.activationHops}" min="1" max="5" class="text_pole nm-input"></label>
 <label>Activation threshold <input type="number" id="nm_activationThreshold" value="${s.activationThreshold}" min="0.01" max="0.5" step="0.01" class="text_pole nm-input"></label>
+<label>Digest alle N Memories <input type="number" id="nm_digestEveryN" value="${s.digestEveryN}" min="5" max="100" class="text_pole nm-input"></label>
+<label class="checkbox_label" style="margin-top:4px">
+<input type="checkbox" id="nm_proactivePrompt" ${s.proactivePrompt?'checked':''}>
+<span style="font-size:.9em">Proaktive Memory-Nutzung (KI baut Memories natürlich ein)</span>
+</label>
 
 <hr>
 <h4 data-i18n="Debug">Debug &amp; Data</h4>
@@ -301,6 +348,10 @@ return`
 <button id="nm_export" class="menu_button">Export</button>
 <button id="nm_import" class="menu_button">Import</button>
 <button id="nm_clearAll" class="menu_button redWarning">Clear All</button>
+</div>
+<div id="nm_cardImportRow" style="display:none;margin:4px 0;padding:4px 0">
+<button id="nm_importCard" class="menu_button nm-import-card-btn">📥 Aus Character Card importieren</button>
+<span style="font-size:.75em;opacity:.6;display:block;margin-top:2px">Backstory-Fakten direkt aus der Character Card als Memories extrahieren</span>
 </div>
 
 <div class="inline-drawer nm-add-drawer">
@@ -343,7 +394,7 @@ const on=(id,ev,fn)=>{const el=document.getElementById(id);if(el)el.addEventList
 
 on('nm_enabled','change',e=>{core.settings.enabled=e.target.checked;saveSettings()});
 const nums=['topK','maxContextTokens','injectionDepth','extractEveryN','extractContextMessages',
-'halfLifeDays','emotionFactor','consolidateEveryN','maxMemories','activationHops','activationThreshold'];
+'halfLifeDays','emotionFactor','consolidateEveryN','maxMemories','activationHops','activationThreshold','digestEveryN'];
 for(const n of nums){
 on(`nm_${n}`,'change',e=>{
 const v=parseFloat(e.target.value);
@@ -351,8 +402,10 @@ if(!isNaN(v)){core.settings[n]=v;saveSettings()}
 });
 }
 
+on('nm_proactivePrompt','change',e=>{core.settings.proactivePrompt=e.target.checked;saveSettings()});
 on('nm_testExtraction','click',()=>doTestExtraction());
 on('nm_showMemories','click',()=>{_browserFilter={type:'all',search:''};showMemoryBrowser();});
+on('nm_importCard','click',()=>doImportFromCard());
 on('nm_showLastInjected','click',()=>showLastInjected());
 on('nm_export','click',()=>doExport());
 on('nm_import','click',()=>doImport());
@@ -411,10 +464,28 @@ statsEl.innerHTML=`
 <div class="nm-stat-row"><b>Types:</b> E:${s.byType.episodic} S:${s.byType.semantic} Em:${s.byType.emotional} R:${s.byType.relational}</div>
 <div class="nm-stat-row"><b>Avg Importance:</b> ${s.avgImportance.toFixed(2)} | <b>Avg Retrievability:</b> ${s.avgRetrievability.toFixed(2)}</div>
 <div class="nm-stat-row"><b>Last injected:</b> ${s.lastInjectedCount} memories</div>`;
+// Card-Import Button: sichtbar wenn Store geladen aber noch kein Import
+const cardRow=document.getElementById('nm_cardImportRow');
+if(cardRow){
+const show=!!(core.store&&!core.store.meta?.cardImported);
+cardRow.style.display=show?'':'none';
+}
 }
 
 // Browser-Filter-State
 let _browserFilter={type:'all',search:''};
+
+function renderTimeline(memories){
+const sorted=[...memories].filter(m=>m.emotionalIntensity>0.1).sort((a,b)=>a.createdAt-b.createdAt).slice(-40);
+if(sorted.length<3)return'';
+const bars=sorted.map(m=>{
+const h=Math.max(10,Math.round(m.emotionalIntensity*100));
+const v=m.emotionalValence;
+const color=v>0.2?'#4caf50':v<-0.2?'#f44336':'#9e9e9e';
+return`<div class="nm-arc-bar" style="height:${h}%;background:${color}" title="${escHtmlAttr(m.content.slice(0,80))}"></div>`;
+}).join('');
+return`<div class="nm-arc-section"><div class="nm-arc-label">📊 Emotional Arc (${sorted.length} Memories)</div><div class="nm-arc-bars">${bars}</div><div class="nm-arc-legend"><span style="color:#f44336">■</span> Negativ &nbsp; <span style="color:#9e9e9e">■</span> Neutral &nbsp; <span style="color:#4caf50">■</span> Positiv</div></div>`;
+}
 
 function renderMemoryBrowser(filter){
 if(!filter)filter=_browserFilter;
@@ -436,10 +507,25 @@ const types=['all','episodic','semantic','emotional','relational','pinned','user
 const typeLabels={all:'Alle',episodic:'Episodic',semantic:'Semantic',emotional:'Emotional',relational:'Relational',pinned:'📌 Pinned',user:'✋ Manuell'};
 let filterBtns=types.map(t=>`<button class="nm-filter-btn${filter.type===t?' active':''}" data-action="filter" data-type="${t}">${typeLabels[t]}</button>`).join('');
 
+// Digest-Block
+let digestHtml='';
+if(core.store.digest?.text){
+const digestDate=new Date(core.store.digest.generatedAt).toLocaleDateString('de-DE');
+digestHtml=`<div class="nm-digest-block"><div class="nm-digest-header"><span class="nm-digest-label">📝 Character Summary</span><button class="nm-action-btn" data-action="regen-digest" title="Digest neu generieren" style="font-size:1em">🔄</button><span class="nm-digest-date">${digestDate}</span></div><div class="nm-digest-text">${escHtml(core.store.digest.text)}</div></div>`;
+}else{
+digestHtml=`<div class="nm-digest-empty"><button class="menu_button" data-action="regen-digest" style="font-size:.8em;padding:3px 8px">📝 Digest generieren</button><span style="font-size:.75em;opacity:.6;margin-left:6px">Narrative Zusammenfassung aller wichtigen Memories</span></div>`;
+}
+
+// Emotion Arc Timeline (alle Memories, nicht gefiltert)
+const allMems=Object.values(core.store.memories);
+const timelineHtml=renderTimeline(allMems);
+
 let html=`<div class="nm-browser-controls">
 <input id="nm_memSearch" class="text_pole nm-search-input" placeholder="Suchen..." value="${escHtml(filter.search)}">
 <div class="nm-type-filters">${filterBtns}</div>
 </div>
+${digestHtml}
+${timelineHtml}
 <h3>Memories (${mems.length}/${total})</h3><div class="nm-mem-list">`;
 
 for(const m of mems.slice(0,150)){
@@ -515,6 +601,11 @@ if(action==='filter'){
 _browserFilter.type=btn.dataset.type;
 panel.innerHTML=renderMemoryBrowser();
 attachBrowserEvents(panel);
+return;
+}
+
+if(action==='regen-digest'){
+await doGenerateDigest();
 return;
 }
 
@@ -630,6 +721,64 @@ setStatus(`Memory hinzugefügt: "${content.substring(0,50)}..."`);
 const panel=document.querySelector('.nm-browser-panel');
 if(panel){panel.innerHTML=renderMemoryBrowser();attachBrowserEvents(panel);}
 console.log('[NM] manual memory added:',mem.id,content.substring(0,50));
+}
+
+async function doImportFromCard(){
+const c=getCtx();
+if(!c||!core.store||!core.charId){setStatus('Kein Charakter geladen',true);return}
+if(c.groupId){setStatus('Import nicht für Gruppen verfügbar',true);return}
+const char=c.characters[c.characterId];
+if(!char){setStatus('Charakter nicht gefunden',true);return}
+const cardParts=[char.description,char.personality,char.scenario];
+const cardText=cardParts.filter(Boolean).join('\n\n').trim();
+if(!cardText){setStatus('Keine Character Card Daten gefunden',true);return}
+if(!core._generateFn){setStatus('Kein AI-Modell konfiguriert',true);return}
+setStatus('Importiere aus Character Card...');
+const origPrompt=getExtractionPrompt();
+setExtractionPrompt(CARD_EXTRACT_SYSTEM);
+let mems=[];
+try{
+const fakeChat=[{is_user:false,name:char.name,mes:cardText}];
+mems=await extractMemories(core._generateFn,fakeChat,core.charId,1);
+}catch(e){
+console.error('[NM] card import error',e);
+setStatus('Import Error: '+e.message,true);
+setExtractionPrompt(origPrompt);
+return;
+}
+setExtractionPrompt(origPrompt);
+if(!mems.length){setStatus('Keine Memories extrahiert — prüfe Browser-Konsole',true);return}
+for(const m of mems){m.stability=2.0}
+integrateMemories(core.store,mems);
+updateMemoryConnections(core.store);
+core.store.meta.cardImported=true;
+await saveStore(core.store);
+updateUI();
+setStatus(`✓ ${mems.length} Memories aus Character Card importiert`);
+const panel=document.querySelector('.nm-browser-panel');
+if(panel){panel.innerHTML=renderMemoryBrowser();attachBrowserEvents(panel);}
+console.log('[NM] card import: extracted',mems.length,'memories');
+}
+
+async function doGenerateDigest(){
+if(!core.store||!core._generateFn){setStatus('Kein Charakter oder generateFn',true);return}
+setStatus('Generiere Memory Digest...');
+try{
+const{generateDigest}=await import('./src/consolidation.js');
+const digestText=await generateDigest(core._generateFn,core.store);
+if(digestText){
+core.store.digest={text:digestText,generatedAt:Date.now(),memCount:Object.keys(core.store.memories).length};
+await saveStore(core.store);
+setStatus('✓ Digest generiert');
+const panel=document.querySelector('.nm-browser-panel');
+if(panel){panel.innerHTML=renderMemoryBrowser();attachBrowserEvents(panel);}
+}else{
+setStatus('Digest: zu wenig wichtige Memories (mind. 3 benötigt)',true);
+}
+}catch(e){
+console.error('[NM] digest generation error',e);
+setStatus('Digest Error: '+e.message,true);
+}
 }
 
 async function doExport(){
@@ -799,6 +948,8 @@ console.log('[NM] generateFn set (nmGenerate with reasoning support)');
 // Events - CHAT_CHANGED und CHAT_LOADED abfangen
 c.eventSource.on(c.eventTypes.CHAT_CHANGED,onChatChanged);
 c.eventSource.on(c.eventTypes.CHAT_LOADED,onChatChanged);
+// MESSAGE_SENT: User hat eine neue Nachricht gesendet (nicht Regenerierung)
+c.eventSource.on(c.eventTypes.MESSAGE_SENT,onUserMessageSent);
 c.eventSource.on(c.eventTypes.MESSAGE_RECEIVED,onMessageReceived);
 // GENERATION_STARTED feuert fuer ALLE APIs (inkl. OpenAI/Chat-Completions)
 // GENERATE_BEFORE_COMBINE_PROMPTS feuert NUR fuer Text-Completion-APIs - daher nicht verwendbar

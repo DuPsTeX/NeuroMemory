@@ -109,7 +109,7 @@ if(!results.length)return'';
 reinforceMemories(results);
 this.lastInjected=results;
 
-return formatMemoryContext(results,this.settings.maxContextTokens);
+return formatMemoryContext(results,this.settings.maxContextTokens,this.store);
 }
 
 // Statistiken
@@ -157,5 +157,7 @@ injectionPosition:0,// IN_PROMPT
 injectionDepth:2,
 injectionRole:0,// SYSTEM
 extractionPrompt:'',// Leer = DEFAULT_EXTRACT_SYSTEM verwenden
+digestEveryN:15,
+proactivePrompt:false,
 };
 }
