@@ -147,6 +147,12 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.4.0
+- **Injection-Fix (kritisch)**: Injection funktionierte nicht bei deutschsprachigen Chats, weil gespeicherte Memories englische Keywords haben (Extraction-Prompt ist Englisch), aber User-Nachrichten auf Deutsch sind → kein BM25-Treffer. Zwei Fixes: (1) BM25 läuft jetzt zusätzlich auf dem Memory-Content (nicht nur Keywords), (2) Fallback: wenn gar kein Query-Signal → werden die Top-K wichtigsten/neuesten Memories trotzdem injiziert. Außerdem: Entity-Matching ist jetzt case-insensitive und prüft auch direkte Namensnennungen im Message-Text.
+- **Memory löschen**: Im "Show Memories"-Panel hat jede Memory jetzt einen ✕-Button zum einzelnen Löschen.
+- **Settings reset-Fix**: Einstellungen wurden nach Neustart im UI falsch angezeigt (UI zeigte Default-Werte, intern waren sie richtig). Jetzt wird das UI nach dem Laden der Settings synchronisiert (`syncUIFromSettings`).
+- **Extraction-Prompt Textarea**: Zeigt jetzt immer den tatsächlich verwendeten Prompt (Standard oder Custom), nicht mehr leer. Beim Bearbeiten: Wenn der Text mit dem Standard übereinstimmt, wird automatisch "Standard" gespeichert (kein Speichern von doppeltem Text).
+
 ### v1.3.0
 - **Anpassbarer Extraction-Prompt**: Unter dem "Enabled"-Schalter gibt es jetzt ein aufklappbares Panel **"Extraction Prompt"**. Dort kann der System-Prompt für die Memory-Extraktion direkt eingesehen und individuell angepasst werden. Ein "Reset to Default"-Button setzt den Prompt jederzeit auf den eingebauten Standard zurück. Der benutzerdefinierte Prompt wird persistent in den SillyTavern-Settings gespeichert.
 - **Bugfix**: `extractMemories` verwendete intern eine nicht-definierte Variable (`EXTRACT_SYSTEM`) statt der konfigurierbaren `_extractSystem`-Variable — die Extraktion verwendete daher nie den gespeicherten Prompt. Behoben.

@@ -1,5 +1,5 @@
 import{NeuroMemoryCore,defaultSettings}from'./src/core.js';
-import{exportStore,importStore,loadStore,deleteStore,setContextGetter}from'./src/store.js';
+import{exportStore,importStore,loadStore,deleteStore,setContextGetter,removeMemory,saveStore}from'./src/store.js';
 import{extractMemories,setExtractionPrompt,getExtractionPrompt,DEFAULT_EXTRACT_SYSTEM}from'./src/extraction.js';
 
 const MODULE_NAME='neuro-memory';
@@ -30,6 +30,32 @@ if(ext)Object.assign(core.settings,ext);
 else c.extensionSettings[MODULE_NAME]=Object.assign({},defaultSettings());
 // Gespeicherten Extraction-Prompt anwenden
 setExtractionPrompt(core.settings.extractionPrompt||'');
+}
+
+// UI-Eingabefelder mit aktuellen core.settings synchronisieren (nach loadSettings)
+function syncUIFromSettings(){
+const s=core.settings;
+const set=(id,val)=>{const el=document.getElementById(id);if(el)el.value=val};
+set('nm_topK',s.topK);
+set('nm_maxContextTokens',s.maxContextTokens);
+set('nm_injectionDepth',s.injectionDepth);
+set('nm_extractEveryN',s.extractEveryN);
+set('nm_extractContextMessages',s.extractContextMessages);
+set('nm_halfLifeDays',s.halfLifeDays);
+set('nm_emotionFactor',s.emotionFactor);
+set('nm_consolidateEveryN',s.consolidateEveryN);
+set('nm_maxMemories',s.maxMemories);
+set('nm_activationHops',s.activationHops);
+set('nm_activationThreshold',s.activationThreshold);
+const cb=document.getElementById('nm_enabled');if(cb)cb.checked=!!s.enabled;
+// Prompt-Textarea ebenfalls aktualisieren
+const promptEl=document.getElementById('nm_extractPrompt');
+if(promptEl){
+const isCustom=!!(s.extractionPrompt&&s.extractionPrompt.trim());
+promptEl.value=isCustom?s.extractionPrompt:DEFAULT_EXTRACT_SYSTEM;
+const hint=document.getElementById('nm_promptHint');
+if(hint)hint.textContent=isCustom?'Benutzerdefinierter Prompt aktiv':'Standard-Prompt (bearbeitbar)';
+}
 }
 
 function saveSettings(){
@@ -231,7 +257,7 @@ return`
 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
 </div>
 <div class="inline-drawer-content">
-<textarea id="nm_extractPrompt" class="nm-prompt-textarea text_pole" rows="12" placeholder="Leer lassen für Standard-Prompt...">${escHtmlAttr(s.extractionPrompt||'')}</textarea>
+<textarea id="nm_extractPrompt" class="nm-prompt-textarea text_pole" rows="12"></textarea>
 <div class="nm-prompt-actions">
 <button id="nm_resetPrompt" class="menu_button" title="Auf Standard-Prompt zurücksetzen">
 <i class="fa-solid fa-rotate-left"></i> Reset to Default
@@ -302,31 +328,33 @@ on('nm_clearAll','click',()=>doClear());
 // Extraction-Prompt Editor
 const promptEl=document.getElementById('nm_extractPrompt');
 if(promptEl){
-// Textarea: bei Aenderung speichern + anwenden
+// Immer den tatsaechlich verwendeten Prompt anzeigen (Default oder Custom)
+const isCustom=!!(core.settings.extractionPrompt&&core.settings.extractionPrompt.trim());
+promptEl.value=isCustom?core.settings.extractionPrompt:DEFAULT_EXTRACT_SYSTEM;
+const hint=document.getElementById('nm_promptHint');
+if(hint)hint.textContent=isCustom?'Benutzerdefinierter Prompt aktiv':'Standard-Prompt (bearbeitbar)';
+
+// Aenderungen speichern: nur wenn Inhalt vom Default abweicht
 promptEl.addEventListener('input',()=>{
 const val=promptEl.value.trim();
-core.settings.extractionPrompt=val;
-setExtractionPrompt(val);
+const isDefault=val===DEFAULT_EXTRACT_SYSTEM.trim();
+const saveVal=isDefault?'':val;
+core.settings.extractionPrompt=saveVal;
+setExtractionPrompt(saveVal);
 saveSettings();
 const hint=document.getElementById('nm_promptHint');
-if(hint)hint.textContent=val?'Benutzerdefinierter Prompt aktiv':'Leer = Standard-Prompt wird verwendet';
+if(hint)hint.textContent=isDefault?'Standard-Prompt (bearbeitbar)':'Benutzerdefinierter Prompt aktiv';
 });
-// Falls settings einen gespeicherten Prompt hat: in Textarea setzen
-if(core.settings.extractionPrompt){
-promptEl.value=core.settings.extractionPrompt;
-const hint=document.getElementById('nm_promptHint');
-if(hint)hint.textContent='Benutzerdefinierter Prompt aktiv';
-}
 }
 on('nm_resetPrompt','click',()=>{
 const promptEl=document.getElementById('nm_extractPrompt');
 if(promptEl){
-promptEl.value='';
+promptEl.value=DEFAULT_EXTRACT_SYSTEM;
 core.settings.extractionPrompt='';
 setExtractionPrompt('');
 saveSettings();
 const hint=document.getElementById('nm_promptHint');
-if(hint)hint.textContent='Leer = Standard-Prompt wird verwendet';
+if(hint)hint.textContent='Standard-Prompt (bearbeitbar)';
 console.log('[NM] Extraction prompt reset to default');
 }
 });
@@ -344,26 +372,48 @@ statsEl.innerHTML=`
 <div class="nm-stat-row"><b>Last injected:</b> ${s.lastInjectedCount} memories</div>`;
 }
 
-function showMemoryBrowser(){
-const s=core.getStats();
+function renderMemoryBrowser(){
 if(!core.store)return;
 const mems=Object.values(core.store.memories).sort((a,b)=>b.createdAt-a.createdAt);
 const ents=Object.values(core.store.entities).sort((a,b)=>b.mentionCount-a.mentionCount);
 let html='<h3>Memories ('+mems.length+')</h3><div class="nm-mem-list">';
 for(const m of mems.slice(0,100)){
 const age=((Date.now()-m.createdAt)/86400000).toFixed(1);
-html+=`<div class="nm-mem-item nm-type-${m.type}">
-<div class="nm-mem-header"><span class="nm-badge">${m.type}</span> <span class="nm-imp">imp:${m.importance.toFixed(2)}</span> <span class="nm-ret">ret:${m.retrievability.toFixed(2)}</span> <span class="nm-age">${age}d ago</span></div>
+html+=`<div class="nm-mem-item nm-type-${m.type}" data-memid="${escHtml(m.id)}">
+<div class="nm-mem-header"><span class="nm-badge">${m.type}</span> <span class="nm-imp">imp:${m.importance.toFixed(2)}</span> <span class="nm-ret">ret:${m.retrievability.toFixed(2)}</span> <span class="nm-age">${age}d</span>
+<button class="nm-del-btn menu_button" data-memid="${escHtml(m.id)}" title="Memory löschen" style="margin-left:auto;padding:1px 6px;font-size:.75em;color:#ff6b6b;border-color:#ff6b6b">✕</button>
+</div>
 <div class="nm-mem-content">${escHtml(m.content)}</div>
-<div class="nm-mem-meta">Entities: ${m.entities.join(', ')} | Keywords: ${m.keywords.join(', ')} | Connections: ${m.connections.length}</div>
+<div class="nm-mem-meta">Entities: ${m.entities.join(', ')} | Keywords: ${m.keywords.join(', ')}</div>
 </div>`;
 }
 html+='</div><h3>Entities ('+ents.length+')</h3><div class="nm-ent-list">';
 for(const e of ents.slice(0,50)){
-html+=`<div class="nm-ent-item"><b>${escHtml(e.name)}</b> [${e.type}] mentions:${e.mentionCount} connections:${e.connections.length}</div>`;
+html+=`<div class="nm-ent-item"><b>${escHtml(e.name)}</b> [${e.type}] mentions:${e.mentionCount}</div>`;
 }
 html+='</div>';
-showPopup('NeuroMemory Browser',html);
+return html;
+}
+
+function showMemoryBrowser(){
+if(!core.store){showDebug('No character loaded');return}
+const debugEl=document.getElementById('nm_debugOutput');
+if(!debugEl)return;
+debugEl.innerHTML=`<div class="nm-browser-panel">${renderMemoryBrowser()}</div>`;
+// Event-Delegation: ein Listener auf dem Container
+debugEl.querySelector('.nm-browser-panel').addEventListener('click',async e=>{
+const btn=e.target.closest('.nm-del-btn');
+if(!btn||!core.store)return;
+e.stopPropagation();
+const memId=btn.dataset.memid;
+const mem=core.store.memories[memId];
+if(!mem)return;
+if(!confirm(`Memory löschen?\n"${mem.content.substring(0,80)}..."`))return;
+removeMemory(core.store,memId);
+await saveStore(core.store);
+updateUI();
+showMemoryBrowser();// neu rendern
+});
 }
 
 function showLastInjected(){
@@ -537,6 +587,7 @@ console.log('[NM] UI inserted');
 setContextGetter(getCtx);
 
 loadSettings();
+syncUIFromSettings();
 console.log('[NM] settings loaded',JSON.stringify(core.settings).substring(0,100));
 core.setGenerateFn(nmGenerate);
 console.log('[NM] generateFn set (nmGenerate with reasoning support)');
