@@ -78,6 +78,17 @@
 .nm-arc-bar:hover{opacity:.65}
 .nm-arc-legend{font-size:.72em;opacity:.55;text-align:right;margin-top:2px}
 
+/* Intensitäts-Badge */
+.nm-int-badge{font-size:.75em;opacity:.8;margin:0 2px}
+
+/* Stimmungsbild */
+.nm-mood-summary{margin:4px 0;padding:4px 6px;font-size:.8em;background:rgba(100,160,255,.05);border-radius:3px;color:var(--SmartThemeQuoteColor)}
+.nm-mood-strongest{margin-top:2px;font-size:.75em;opacity:.8;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Emotions-Slider im Formular */
+.nm-add-emo-label{display:flex;align-items:center;gap:4px;font-size:.82em;flex:1;min-width:140px}
+.nm-emo-range{flex:1;min-width:60px;cursor:pointer}
+
 /* Extraction Prompt Editor */
 .nm-prompt-drawer{margin:6px 0}
 .nm-prompt-toggle{padding:5px 8px!important;font-size:.85em;background:var(--black10a);border-radius:4px}

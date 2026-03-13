@@ -8,7 +8,7 @@ export function retrieveMemories(store,message,opts={}){
 const{
 topK=10,maxHops=3,decayPerHop=0.5,activationThreshold=0.15,
 halfLifeHours=720,emotionFactor=0.5,
-weights={activation:0.35,importance:0.20,retrievability:0.20,emotion:0.15,recency:0.10}
+weights={activation:0.30,importance:0.20,retrievability:0.15,emotion:0.25,recency:0.10}
 }=opts;
 
 const mems=getAllMemories(store);
@@ -109,6 +109,14 @@ scored.sort((a,b)=>b.score-a.score);
 return scored.slice(0,topK);
 }
 
+// Emotion-Label fuer den Prompt: signalisiert KI Gewicht und Valenz einer Memory
+function emotionLabel(m){
+if(!m.emotionalIntensity||m.emotionalIntensity<0.3)return'';
+const valStr=m.emotionalValence>0.3?'positive':m.emotionalValence<-0.3?'negative':'mixed';
+const intStr=m.emotionalIntensity>=0.75?'★★★ highly':m.emotionalIntensity>=0.5?'★★':' ★ slightly';
+return` | ${intStr} ${valStr}`;
+}
+
 // Formatiere Memories als Kontext-Block fuer Prompt-Injektion
 // store: optional, wird fuer Digest-Prepend verwendet
 export function formatMemoryContext(results,maxTokens=500,store=null){
@@ -121,7 +129,8 @@ out+=`[Character Summary]\n${store.digest.text}\n\n`;
 out+='[Character Memory - Recalled associations]\n';
 let approxTokens=Math.ceil(out.length/4);
 for(const r of results){
-const line=`- ${r.memory.content} [${r.memory.type}]\n`;
+const m=r.memory;
+const line=`- ${m.content} [${m.type}${emotionLabel(m)}]\n`;
 const lineTokens=Math.ceil(line.length/4);// Grobe Schaetzung
 if(approxTokens+lineTokens>maxTokens)break;
 out+=line;

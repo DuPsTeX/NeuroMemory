@@ -374,6 +374,10 @@ return`
 </label>
 </div>
 <input id="nm_newMemEntities" class="text_pole" placeholder="Entities (kommagetrennt): Veyra, Tay" style="margin:3px 0">
+<div class="nm-add-row">
+<label class="nm-add-emo-label">😔 <input type="range" id="nm_newMemValence" min="-1" max="1" step="0.1" value="0" class="nm-emo-range"> 😊 <span id="nm_valenceValue">0.0</span></label>
+<label class="nm-add-emo-label">⚡ Intensität: <input type="range" id="nm_newMemIntensity" min="0" max="1" step="0.1" value="0" class="nm-emo-range"> <span id="nm_intensityValue">0.0</span></label>
+</div>
 <div style="display:flex;align-items:center;gap:6px;margin-top:4px">
 <label class="checkbox_label" style="font-size:.85em">
 <input type="checkbox" id="nm_newMemPinned">
@@ -417,6 +421,17 @@ const impRange=document.getElementById('nm_newMemImportance');
 const impVal=document.getElementById('nm_impValue');
 if(impRange&&impVal){
 impRange.addEventListener('input',()=>{impVal.textContent=parseFloat(impRange.value).toFixed(1)});
+}
+// Emotions-Slider Anzeige
+const valRange=document.getElementById('nm_newMemValence');
+const valVal=document.getElementById('nm_valenceValue');
+if(valRange&&valVal){
+valRange.addEventListener('input',()=>{valVal.textContent=parseFloat(valRange.value).toFixed(1)});
+}
+const intRange=document.getElementById('nm_newMemIntensity');
+const intVal=document.getElementById('nm_intensityValue');
+if(intRange&&intVal){
+intRange.addEventListener('input',()=>{intVal.textContent=parseFloat(intRange.value).toFixed(1)});
 }
 
 // Extraction-Prompt Editor
@@ -464,6 +479,11 @@ statsEl.innerHTML=`
 <div class="nm-stat-row"><b>Types:</b> E:${s.byType.episodic} S:${s.byType.semantic} Em:${s.byType.emotional} R:${s.byType.relational}</div>
 <div class="nm-stat-row"><b>Avg Importance:</b> ${s.avgImportance.toFixed(2)} | <b>Avg Retrievability:</b> ${s.avgRetrievability.toFixed(2)}</div>
 <div class="nm-stat-row"><b>Last injected:</b> ${s.lastInjectedCount} memories</div>`;
+const mood=core.store?getMoodSummary(core.store):null;
+if(mood){
+const strongest=mood.strongest;
+statsEl.innerHTML+=`<div class="nm-mood-summary">💭 ${mood.pos}% positiv · ${mood.neu}% neutral · ${mood.neg}% negativ${strongest?`<div class="nm-mood-strongest">🔥 "${escHtml(strongest.content.substring(0,50))}..." (${strongest.emotionalIntensity.toFixed(2)})</div>`:''}</div>`;
+}
 // Card-Import Button: sichtbar wenn Store geladen aber noch kein Import
 const cardRow=document.getElementById('nm_cardImportRow');
 if(cardRow){
@@ -485,6 +505,17 @@ const color=v>0.2?'#4caf50':v<-0.2?'#f44336':'#9e9e9e';
 return`<div class="nm-arc-bar" style="height:${h}%;background:${color}" title="${escHtmlAttr(m.content.slice(0,80))}"></div>`;
 }).join('');
 return`<div class="nm-arc-section"><div class="nm-arc-label">📊 Emotional Arc (${sorted.length} Memories)</div><div class="nm-arc-bars">${bars}</div><div class="nm-arc-legend"><span style="color:#f44336">■</span> Negativ &nbsp; <span style="color:#9e9e9e">■</span> Neutral &nbsp; <span style="color:#4caf50">■</span> Positiv</div></div>`;
+}
+
+function getMoodSummary(store){
+const mems=Object.values(store.memories).filter(m=>m.emotionalIntensity>0.1);
+if(mems.length<3)return null;
+const pos=mems.filter(m=>m.emotionalValence>0.2).length;
+const neg=mems.filter(m=>m.emotionalValence<-0.2).length;
+const neu=mems.length-pos-neg;
+const pct=n=>Math.round(n/mems.length*100);
+const strongest=[...mems].sort((a,b)=>b.emotionalIntensity-a.emotionalIntensity)[0];
+return{pos:pct(pos),neu:pct(neu),neg:pct(neg),strongest};
 }
 
 function renderMemoryBrowser(filter){
@@ -533,9 +564,13 @@ const age=((Date.now()-m.createdAt)/86400000).toFixed(1);
 const pinLabel=m.pinned?'📌':'📍';
 const pinTitle=m.pinned?'Unpin':'Pin (immer injizieren)';
 const userBadge=m.userCreated?'<span class="nm-user-badge" title="Manuell erstellt">✋</span>':'';
-html+=`<div class="nm-mem-item nm-type-${m.type}${m.pinned?' nm-pinned':''}" data-memid="${escHtml(m.id)}">
+const bw=(2+(m.emotionalIntensity||0)*5).toFixed(1);
+const bgAlpha=(m.emotionalIntensity||0)*0.06;
+const bgColor=(m.emotionalValence||0)>0.2?`rgba(76,175,80,${bgAlpha})`:(m.emotionalValence||0)<-0.2?`rgba(244,67,54,${bgAlpha})`:'transparent';
+const intBadge=(m.emotionalIntensity||0)>=0.85?'<span class="nm-int-badge" title="Sehr intensive Erinnerung">⚡⚡</span>':(m.emotionalIntensity||0)>=0.6?'<span class="nm-int-badge" title="Intensive Erinnerung">⚡</span>':'';
+html+=`<div class="nm-mem-item nm-type-${m.type}${m.pinned?' nm-pinned':''}" data-memid="${escHtml(m.id)}" style="border-left-width:${bw}px;background-color:${bgColor}">
 <div class="nm-mem-header">
-<span class="nm-badge">${m.type}</span>${userBadge}
+<span class="nm-badge">${m.type}</span>${intBadge}${userBadge}
 <span class="nm-imp">imp:${m.importance.toFixed(2)}</span>
 <span class="nm-ret">ret:${m.retrievability.toFixed(2)}</span>
 <span class="nm-age">${age}d</span>
@@ -695,8 +730,8 @@ content,
 entities,
 keywords:extractKeywords(content),
 importance:isNaN(importance)?0.8:Math.max(0,Math.min(1,importance)),
-emotionalValence:0,
-emotionalIntensity:0,
+emotionalValence:parseFloat(document.getElementById('nm_newMemValence')?.value||'0'),
+emotionalIntensity:parseFloat(document.getElementById('nm_newMemIntensity')?.value||'0'),
 stability:2.0,// hohe Stabilitaet fuer manuell erstellte Memories
 retrievability:1.0,
 accessCount:0,
@@ -716,6 +751,10 @@ updateUI();
 if(contentEl)contentEl.value='';
 const entEl=document.getElementById('nm_newMemEntities');if(entEl)entEl.value='';
 const pinnedCb=document.getElementById('nm_newMemPinned');if(pinnedCb)pinnedCb.checked=false;
+const valSlider=document.getElementById('nm_newMemValence');if(valSlider)valSlider.value='0';
+const valDisplay=document.getElementById('nm_valenceValue');if(valDisplay)valDisplay.textContent='0.0';
+const intSlider=document.getElementById('nm_newMemIntensity');if(intSlider)intSlider.value='0';
+const intDisplay=document.getElementById('nm_intensityValue');if(intDisplay)intDisplay.textContent='0.0';
 setStatus(`Memory hinzugefügt: "${content.substring(0,50)}..."`);
 // Browser aktualisieren falls sichtbar
 const panel=document.querySelector('.nm-browser-panel');

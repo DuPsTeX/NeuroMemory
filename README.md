@@ -147,6 +147,14 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.7.0
+- **Emotionale KI-Kalibrierung**: `formatMemoryContext()` bettet jetzt emotionale Labels direkt in den Prompt ein (`★★★ highly negative`, `★★ positive`, `★ slightly mixed`). Die KI bekommt konkrete Gewichtungs-Signale statt rohe Zahlen — intensiv negative Memories werden als solche erkannt und beeinflussen Ton und Tiefe der Antwort.
+- **Emotion-Gewichtung erhöht**: Im Retrieval-Scoring wurde `emotion` von 0.15 auf 0.25 angehoben (activation 0.35→0.30, retrievability 0.20→0.15). Entspricht besser der menschlichen Psychologie: emotional aufgeladene Memories werden bevorzugt erinnert.
+- **Stimmungsbild im Stats-Panel**: Unter den Memory-Statistiken erscheint jetzt `💭 X% positiv · Y% neutral · Z% negativ` plus die stärkste Erinnerung des Charakters — sofortiger emotionaler Überblick ohne Memory Browser öffnen.
+- **Visuelle Intensitätskodierung**: Im Memory Browser skaliert die Border-Stärke mit der emotionalen Intensität (dünn = neutral, dick = intensiv), der Hintergrund tönt sich leicht grünlich (positiv) oder rötlich (negativ), und intensive Memories ab 0.6 erhalten ein ⚡-Badge (ab 0.85 ⚡⚡).
+- **Emotions-Slider beim manuellen Hinzufügen**: Das "Memory manuell hinzufügen"-Formular hat jetzt zwei Slider — Valenz (😔→😊, -1 bis +1) und Intensität (0 bis 1). Manuell erstellte Memories können jetzt vollständige emotionale Metadaten tragen.
+- **Digest berücksichtigt emotionale Intensität**: `generateDigest()` nimmt jetzt auch Memories mit `emotionalIntensity ≥ 0.7` auf — auch wenn ihre `importance` niedrig ist. Stark emotional aufgeladene Momente fließen in die Charakter-Narration ein.
+
 ### v1.6.0
 - **Character Card Auto-Import**: Neues "📥 Aus Character Card importieren"-Panel erscheint automatisch bei Charakteren ohne Memories. Ein Klick extrahiert Backstory-Fakten (Persönlichkeit, Fähigkeiten, Beziehungen, Geschichte) direkt aus der Character Card via LLM — mit einem speziell angepassten Extraction-Prompt für Backstory (nur `semantic`/`relational` Memories, keine episodischen). Nach erfolgreichem Import verschwindet der Button dauerhaft.
 - **Memory Digest**: Der Memory Browser zeigt jetzt einen "📝 Character Summary"-Block — eine KI-generierte 2-3 Satz Narration der wichtigsten Memories. Der Digest wird **automatisch in den Prompt injiziert** (vor den Bullet-Point-Memories), sodass die KI den Charakter kontextuell erfasst. Auto-Regenerierung alle N neuen Memories (Standard: 15). Manuell mit "🔄"-Button neu generieren.

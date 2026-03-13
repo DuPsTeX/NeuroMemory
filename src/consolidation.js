@@ -5,7 +5,7 @@ import{updateMemoryConnections}from'./network.js';
 const DIGEST_SYSTEM=`You are a character memory narrator. Given a list of memories about a fictional character, write a cohesive 2-3 sentence narrative summary. Focus on character essence, key relationships, and emotional state. Write in third person, present tense. Pure prose — no lists, no bullet points. Respond with ONLY the summary text, no additional formatting.`;
 
 export async function generateDigest(generateFn,store){
-const mems=getAllMemories(store).filter(m=>m.importance>=0.5||m.pinned).sort((a,b)=>b.importance-a.importance).slice(0,12);
+const mems=getAllMemories(store).filter(m=>m.importance>=0.5||m.pinned||m.emotionalIntensity>=0.7).sort((a,b)=>b.importance-a.importance).slice(0,12);
 if(mems.length<3)return null;
 const memList=mems.map(m=>`[${m.type}] ${m.content}`).join('\n');
 const prompt=`${DIGEST_SYSTEM}\n\nMemories:\n${memList}\n\nNarrative Summary:`;
