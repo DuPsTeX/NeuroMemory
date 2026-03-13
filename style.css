@@ -78,6 +78,10 @@
 .nm-arc-bar:hover{opacity:.65}
 .nm-arc-legend{font-size:.72em;opacity:.55;text-align:right;margin-top:2px}
 
+/* Fading Memory Alert */
+.nm-fading-alert{display:flex;align-items:center;gap:6px;margin:4px 0;padding:4px 8px;font-size:.8em;background:rgba(255,160,0,.1);border:1px solid rgba(255,160,0,.3);border-radius:3px;color:#ffaa00}
+.nm-fading-alert .nm-action-btn{opacity:.9;font-size:.85em}
+
 /* Intensitäts-Badge */
 .nm-int-badge{font-size:.75em;opacity:.8;margin:0 2px}
 

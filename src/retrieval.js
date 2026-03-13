@@ -106,10 +106,41 @@ scored.push({memory:m,score,activation:act,retrievability});
 }
 
 scored.sort((a,b)=>b.score-a.score);
-return scored.slice(0,topK);
+const result=scored.slice(0,topK);
+
+// Memory Surprise: 15% Chance fuer spontane starke emotionale Erinnerung (wie ein Flashback)
+if(Math.random()<0.15){
+const candidates=mems.filter(m=>
+!result.some(s=>s.memory.id===m.id)&&(m.emotionalIntensity||0)>=0.6
+).sort((a,b)=>(b.emotionalIntensity||0)-(a.emotionalIntensity||0));
+if(candidates.length){
+result.push({memory:candidates[0],score:0.05,activation:0.05,
+retrievability:candidates[0].retrievability,isSurprise:true});
+console.log('[NM] Memory Surprise:',candidates[0].content.substring(0,60));
+}
 }
 
-// Emotion-Label fuer den Prompt: signalisiert KI Gewicht und Valenz einer Memory
+return result;
+}
+
+// Berechne aktuellen emotionalen Zustand aus den letzten emotional relevanten Memories
+function computeEmotionalState(store){
+if(!store)return null;
+const mems=Object.values(store.memories)
+.filter(m=>(m.emotionalIntensity||0)>0.2)
+.sort((a,b)=>b.createdAt-a.createdAt).slice(0,10);
+if(mems.length<2)return null;
+const avg=mems.reduce((s,m)=>s+(m.emotionalValence||0),0)/mems.length;
+const half=Math.floor(mems.length/2);
+const recentAvg=mems.slice(0,half).reduce((s,m)=>s+(m.emotionalValence||0),0)/half;
+const olderAvg=mems.slice(half).reduce((s,m)=>s+(m.emotionalValence||0),0)/(mems.length-half);
+const trend=recentAvg-olderAvg;
+const state=avg>0.5?'joyful':avg>0.2?'content':avg>-0.2?(mems.some(m=>(m.emotionalIntensity||0)>0.6)?'conflicted':'calm'):avg>-0.5?'troubled':'grieving';
+const trendStr=trend>0.15?', trending hopeful':trend<-0.15?', darkening':'';
+return`Current Emotional State: ${state}${trendStr}`;
+}
+
+// Emotion-Label fuer Prompt: ★★★ highly negative etc.
 function emotionLabel(m){
 if(!m.emotionalIntensity||m.emotionalIntensity<0.3)return'';
 const valStr=m.emotionalValence>0.3?'positive':m.emotionalValence<-0.3?'negative':'mixed';
@@ -117,25 +148,85 @@ const intStr=m.emotionalIntensity>=0.75?'★★★ highly':m.emotionalIntensity>
 return` | ${intStr} ${valStr}`;
 }
 
-// Formatiere Memories als Kontext-Block fuer Prompt-Injektion
-// store: optional, wird fuer Digest-Prepend verwendet
+// Formatiere Memories als tiered Kontext-Block fuer Prompt-Injektion
 export function formatMemoryContext(results,maxTokens=500,store=null){
 if(!results.length)return'';
+
+// Surprise-Memory separieren
+const surprise=results.find(r=>r.isSurprise);
+const mainResults=results.filter(r=>!r.isSurprise);
+
+// In Tiers aufteilen
+const defining=mainResults
+.filter(r=>(r.memory.emotionalIntensity||0)>=0.5)
+.sort((a,b)=>(b.memory.emotionalIntensity||0)-(a.memory.emotionalIntensity||0))
+.slice(0,3);
+const defIds=new Set(defining.map(r=>r.memory.id));
+
+const recent=mainResults
+.filter(r=>r.memory.type==='episodic'&&!defIds.has(r.memory.id))
+.sort((a,b)=>b.memory.createdAt-a.memory.createdAt)
+.slice(0,4);
+const recIds=new Set(recent.map(r=>r.memory.id));
+
+const background=mainResults.filter(r=>!defIds.has(r.memory.id)&&!recIds.has(r.memory.id));
+
 let out='';
-// Digest voranstellen wenn vorhanden
+let approxTokens=0;
+const add=(text)=>{
+const t=Math.ceil(text.length/4);
+if(approxTokens+t>maxTokens)return false;
+out+=text;approxTokens+=t;return true;
+};
+
+// Block 1: Digest (Character Essence)
 if(store?.digest?.text){
-out+=`[Character Summary]\n${store.digest.text}\n\n`;
+if(!add(`[Character Essence]\n${store.digest.text}\n\n`))return out;
 }
-out+='[Character Memory - Recalled associations]\n';
-let approxTokens=Math.ceil(out.length/4);
-for(const r of results){
+
+// Block 2: Aktueller emotionaler Zustand
+const emotState=computeEmotionalState(store);
+if(emotState){
+if(!add(`[${emotState}]\n\n`))return out;
+}
+
+// Block 3: Defining Memories (high emotional weight)
+if(defining.length){
+if(!add('[Defining Memories — High Emotional Weight]\n'))return out;
+for(const r of defining){
 const m=r.memory;
-const line=`- ${m.content} [${m.type}${emotionLabel(m)}]\n`;
-const lineTokens=Math.ceil(line.length/4);// Grobe Schaetzung
-if(approxTokens+lineTokens>maxTokens)break;
-out+=line;
-approxTokens+=lineTokens;
+const intStr=(m.emotionalIntensity||0)>=0.75?'★★★':(m.emotionalIntensity||0)>=0.5?'★★ ':'★  ';
+if(!add(`${intStr} ${m.content}${emotionLabel(m)}\n`))break;
 }
+if(!add('\n'))return out;
+}
+
+// Block 4: Recent Events (episodic, nicht defining)
+if(recent.length){
+if(!add('[Recent Events]\n'))return out;
+for(const r of recent){
+if(!add(`• ${r.memory.content}\n`))break;
+}
+if(!add('\n'))return out;
+}
+
+// Block 5: Background Knowledge (semantic + relational)
+if(background.length){
+if(!add('[Background Knowledge]\n'))return out;
+for(const r of background){
+const m=r.memory;
+const emo=emotionLabel(m);
+if(!add(`• ${m.content}${emo?` [${m.type}${emo}]`:''}\n`))break;
+}
+}
+
+// Block 6: Sudden Recall (Memory Surprise — spontaner Flashback)
+if(surprise){
+const m=surprise.memory;
+const intStr=(m.emotionalIntensity||0)>=0.75?'★★★':(m.emotionalIntensity||0)>=0.5?'★★ ':'★  ';
+add(`\n[Sudden Recall]\n${intStr} Unvermutet taucht auf: "${m.content}"${emotionLabel(m)}\n`);
+}
+
 return out;
 }
 

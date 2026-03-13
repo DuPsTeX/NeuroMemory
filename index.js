@@ -354,6 +354,20 @@ return`
 <span style="font-size:.75em;opacity:.6;display:block;margin-top:2px">Backstory-Fakten direkt aus der Character Card als Memories extrahieren</span>
 </div>
 
+<div class="inline-drawer nm-textimport-drawer">
+<div class="inline-drawer-toggle inline-drawer-header nm-add-toggle">
+<span>📋 Text zu Memories importieren</span>
+<div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+</div>
+<div class="inline-drawer-content">
+<textarea id="nm_importText" class="text_pole nm-add-textarea" rows="5" placeholder="Füge beliebigen Text ein — Session-Zusammenfassung, Lore, Charakternotizen..."></textarea>
+<div style="display:flex;gap:6px;align-items:center;margin-top:4px">
+<button id="nm_doTextImport" class="menu_button">📋 Importieren</button>
+<span style="font-size:.75em;opacity:.6">KI extrahiert passende Memories aus dem Text</span>
+</div>
+</div>
+</div>
+
 <div class="inline-drawer nm-add-drawer">
 <div class="inline-drawer-toggle inline-drawer-header nm-add-toggle">
 <span>+ Memory manuell hinzufügen</span>
@@ -410,6 +424,7 @@ on('nm_proactivePrompt','change',e=>{core.settings.proactivePrompt=e.target.chec
 on('nm_testExtraction','click',()=>doTestExtraction());
 on('nm_showMemories','click',()=>{_browserFilter={type:'all',search:''};showMemoryBrowser();});
 on('nm_importCard','click',()=>doImportFromCard());
+on('nm_doTextImport','click',()=>doImportFromText());
 on('nm_showLastInjected','click',()=>showLastInjected());
 on('nm_export','click',()=>doExport());
 on('nm_import','click',()=>doImport());
@@ -483,6 +498,13 @@ const mood=core.store?getMoodSummary(core.store):null;
 if(mood){
 const strongest=mood.strongest;
 statsEl.innerHTML+=`<div class="nm-mood-summary">💭 ${mood.pos}% positiv · ${mood.neu}% neutral · ${mood.neg}% negativ${strongest?`<div class="nm-mood-strongest">🔥 "${escHtml(strongest.content.substring(0,50))}..." (${strongest.emotionalIntensity.toFixed(2)})</div>`:''}</div>`;
+}
+// Fading Memory Alert
+const fadingMems=core.store?Object.values(core.store.memories).filter(m=>!m.pinned&&(m.retrievability||0)<0.25):[];
+if(fadingMems.length){
+statsEl.innerHTML+=`<div class="nm-fading-alert">⚠️ ${fadingMems.length} ${fadingMems.length===1?'Memory verblasst':'Memories verblassen'} <button id="nm_reinforceFading" class="nm-action-btn" title="Stabilität auffrischen">🔄 Auffrischen</button></div>`;
+const rfBtn=document.getElementById('nm_reinforceFading');
+if(rfBtn)rfBtn.addEventListener('click',()=>doReinforceFading());
 }
 // Card-Import Button: sichtbar wenn Store geladen aber noch kein Import
 const cardRow=document.getElementById('nm_cardImportRow');
@@ -762,6 +784,22 @@ if(panel){panel.innerHTML=renderMemoryBrowser();attachBrowserEvents(panel);}
 console.log('[NM] manual memory added:',mem.id,content.substring(0,50));
 }
 
+async function doReinforceFading(){
+if(!core.store)return;
+const t=Date.now();let count=0;
+for(const m of Object.values(core.store.memories)){
+if(!m.pinned&&(m.retrievability||0)<0.25){
+m.stability=m.stability*1.3+0.2;
+m.lastReinforcedAt=t;
+m.retrievability=Math.min(1,(m.retrievability||0)+0.3);
+count++;
+}
+}
+await saveStore(core.store);
+updateUI();
+setStatus(`✓ ${count} ${count===1?'Memory':'Memories'} aufgefrischt`);
+}
+
 async function doImportFromCard(){
 const c=getCtx();
 if(!c||!core.store||!core.charId){setStatus('Kein Charakter geladen',true);return}
@@ -817,6 +855,32 @@ setStatus('Digest: zu wenig wichtige Memories (mind. 3 benötigt)',true);
 }catch(e){
 console.error('[NM] digest generation error',e);
 setStatus('Digest Error: '+e.message,true);
+}
+}
+
+async function doImportFromText(){
+const textEl=document.getElementById('nm_importText');
+const text=textEl?.value.trim();
+if(!text){setStatus('Bitte Text eingeben',true);return}
+if(!core.store||!core.charId){setStatus('Kein Charakter geladen',true);return}
+if(!core._generateFn){setStatus('Kein AI-Modell konfiguriert',true);return}
+setStatus('Importiere aus Text...');
+const fakeChat=[{is_user:false,name:core.charName||'Character',mes:text}];
+try{
+const mems=await extractMemories(core._generateFn,fakeChat,core.charId,1);
+if(!mems.length){setStatus('Keine Memories extrahiert — prüfe Browser-Konsole',true);return}
+integrateMemories(core.store,mems);
+updateMemoryConnections(core.store);
+await saveStore(core.store);
+updateUI();
+if(textEl)textEl.value='';
+setStatus(`✓ ${mems.length} Memories aus Text importiert`);
+const panel=document.querySelector('.nm-browser-panel');
+if(panel){panel.innerHTML=renderMemoryBrowser();attachBrowserEvents(panel);}
+console.log('[NM] text import: extracted',mems.length,'memories');
+}catch(e){
+console.error('[NM] text import error',e);
+setStatus('Import Error: '+e.message,true);
 }
 }
 

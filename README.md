@@ -147,6 +147,13 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.8.0
+- **Tiered Memory Injection**: Der KI-Kontext ist jetzt strukturiert statt eine flache Liste — `[Character Essence]` (Digest), `[Current Emotional State]`, `[Defining Memories — High Emotional Weight]` (intensive Memories mit ★-Labels), `[Recent Events]` (episodische Memories), `[Background Knowledge]` (Fakten & Beziehungen), `[Sudden Recall]` (Flashback). Die KI weiß sofort WIE sie jede Erinnerung verwenden soll.
+- **Emotional State Tracking**: Automatische Berechnung des aktuellen Gemütszustands (`joyful` / `content` / `calm` / `conflicted` / `troubled` / `grieving`) + Trend-Signal (`trending hopeful` / `darkening`) — injiziert als `[Current Emotional State: troubled, darkening]` vor den Memories.
+- **Memory Surprise / Flashback**: Mit 15% Wahrscheinlichkeit wird eine high-intensity Memory (≥ 0.6) als `[Sudden Recall]` Block injiziert — simuliert spontane emotionale Erinnerungen wie beim Menschen.
+- **Fading Memory Alert**: Im Stats-Panel erscheint `⚠️ N Memories verblassen` wenn Memories unter retrievability 0.25 fallen. "🔄 Auffrischen" stabilisiert alle verblassenden Memories mit sanftem Boost.
+- **Text-to-Memory Import**: Neuer "📋 Text zu Memories importieren"-Drawer — beliebigen Text (Session-Recap, Lore, Charakternotizen) einfügen → KI extrahiert passende Memories automatisch.
+
 ### v1.7.0
 - **Emotionale KI-Kalibrierung**: `formatMemoryContext()` bettet jetzt emotionale Labels direkt in den Prompt ein (`★★★ highly negative`, `★★ positive`, `★ slightly mixed`). Die KI bekommt konkrete Gewichtungs-Signale statt rohe Zahlen — intensiv negative Memories werden als solche erkannt und beeinflussen Ton und Tiefe der Antwort.
 - **Emotion-Gewichtung erhöht**: Im Retrieval-Scoring wurde `emotion` von 0.15 auf 0.25 angehoben (activation 0.35→0.30, retrievability 0.20→0.15). Entspricht besser der menschlichen Psychologie: emotional aufgeladene Memories werden bevorzugt erinnert.
