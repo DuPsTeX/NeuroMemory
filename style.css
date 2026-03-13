@@ -41,6 +41,7 @@
 .nm-del-btn{color:#ff6b6b!important}
 .nm-del-btn:hover{background:rgba(255,50,50,.15)!important}
 .nm-user-badge{font-size:.8em;margin:0 2px;opacity:.7;title:'Manuell erstellt'}
+.nm-lb-badge{font-size:.8em;opacity:.7;margin:0 2px}
 
 /* Gepinnte Memories */
 .nm-pinned{border-left-color:#ffd700!important;background:rgba(255,215,0,.05)!important}

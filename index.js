@@ -354,6 +354,11 @@ return`
 <span style="font-size:.75em;opacity:.6;display:block;margin-top:2px">Backstory-Fakten direkt aus der Character Card als Memories extrahieren</span>
 </div>
 
+<div id="nm_lorebookImportRow" style="display:none;margin:4px 0;padding:4px 0">
+<button id="nm_importLorebook" class="menu_button nm-import-card-btn">📚 Aus aktivem Lorebook importieren</button>
+<span style="font-size:.75em;opacity:.6;display:block;margin-top:2px">Alle aktiven Lorebook-Einträge als Memories importieren (Re-Import ersetzt vorhandene)</span>
+</div>
+
 <div class="inline-drawer nm-textimport-drawer">
 <div class="inline-drawer-toggle inline-drawer-header nm-add-toggle">
 <span>📋 Text zu Memories importieren</span>
@@ -425,6 +430,7 @@ on('nm_testExtraction','click',()=>doTestExtraction());
 on('nm_showMemories','click',()=>{_browserFilter={type:'all',search:''};showMemoryBrowser();});
 on('nm_importCard','click',()=>doImportFromCard());
 on('nm_doTextImport','click',()=>doImportFromText());
+on('nm_importLorebook','click',()=>doImportFromLorebook());
 on('nm_showLastInjected','click',()=>showLastInjected());
 on('nm_export','click',()=>doExport());
 on('nm_import','click',()=>doImport());
@@ -512,6 +518,8 @@ if(cardRow){
 const show=!!(core.store&&!core.store.meta?.cardImported);
 cardRow.style.display=show?'':'none';
 }
+const lbRow=document.getElementById('nm_lorebookImportRow');
+if(lbRow)lbRow.style.display=core.store?'':'none';
 }
 
 // Browser-Filter-State
@@ -586,13 +594,14 @@ const age=((Date.now()-m.createdAt)/86400000).toFixed(1);
 const pinLabel=m.pinned?'📌':'📍';
 const pinTitle=m.pinned?'Unpin':'Pin (immer injizieren)';
 const userBadge=m.userCreated?'<span class="nm-user-badge" title="Manuell erstellt">✋</span>':'';
+const lbBadge=m.lorebookSource?`<span class="nm-lb-badge" title="Aus Lorebook: ${escHtml(m.lorebookSource)}">📚</span>`:'';
 const bw=(2+(m.emotionalIntensity||0)*5).toFixed(1);
 const bgAlpha=(m.emotionalIntensity||0)*0.06;
 const bgColor=(m.emotionalValence||0)>0.2?`rgba(76,175,80,${bgAlpha})`:(m.emotionalValence||0)<-0.2?`rgba(244,67,54,${bgAlpha})`:'transparent';
 const intBadge=(m.emotionalIntensity||0)>=0.85?'<span class="nm-int-badge" title="Sehr intensive Erinnerung">⚡⚡</span>':(m.emotionalIntensity||0)>=0.6?'<span class="nm-int-badge" title="Intensive Erinnerung">⚡</span>':'';
 html+=`<div class="nm-mem-item nm-type-${m.type}${m.pinned?' nm-pinned':''}" data-memid="${escHtml(m.id)}" style="border-left-width:${bw}px;background-color:${bgColor}">
 <div class="nm-mem-header">
-<span class="nm-badge">${m.type}</span>${intBadge}${userBadge}
+<span class="nm-badge">${m.type}</span>${intBadge}${lbBadge}${userBadge}
 <span class="nm-imp">imp:${m.importance.toFixed(2)}</span>
 <span class="nm-ret">ret:${m.retrievability.toFixed(2)}</span>
 <span class="nm-age">${age}d</span>
@@ -882,6 +891,62 @@ console.log('[NM] text import: extracted',mems.length,'memories');
 console.error('[NM] text import error',e);
 setStatus('Import Error: '+e.message,true);
 }
+}
+
+async function doImportFromLorebook(){
+if(!core.store||!core.charId){setStatus('Kein Charakter geladen',true);return}
+let selected_world_info,wiLoadFn;
+try{
+const wi=await import('/scripts/world-info.js');
+selected_world_info=wi.selected_world_info;
+wiLoadFn=wi.loadWorldInfo;
+}catch(e){
+console.warn('[NM] world-info.js import failed, trying context fallback',e);
+const c=getCtx();
+wiLoadFn=c?.loadWorldInfo?.bind(c);
+selected_world_info=[];
+}
+if(!selected_world_info?.length){
+setStatus('Kein Lorebook aktiv. Bitte im Chat ein Lorebook auswählen.',true);
+return;
+}
+setStatus('Importiere aus Lorebook...');
+let totalMems=0;
+for(const bookName of selected_world_info){
+// Bestehende Lorebook-Memories fuer dieses Buch entfernen (sauberer Re-Import)
+for(const[id,m]of Object.entries(core.store.memories)){
+if(m.lorebookSource===bookName)removeMemory(core.store,id);
+}
+let data;
+try{data=await wiLoadFn(bookName);}
+catch(e){console.warn('[NM] loadWorldInfo failed for',bookName,e);continue}
+if(!data?.entries)continue;
+const entries=Object.values(data.entries).filter(e=>!e.disable&&e.content?.trim().length>5);
+const t=Date.now();
+const mems=entries.map(e=>({
+id:uid(),characterId:core.charId,type:'semantic',
+content:((e.comment?e.comment+': ':'')+e.content).slice(0,300),
+entities:(e.key||[]).slice(0,5),
+keywords:(e.key||[]).map(k=>k.toLowerCase()).slice(0,10),
+importance:e.constant?1.0:0.7,
+emotionalValence:0,emotionalIntensity:0,
+stability:3.0,retrievability:1.0,accessCount:0,
+createdAt:t,lastAccessedAt:t,lastReinforcedAt:t,
+sourceMessageIds:[],connections:[],
+pinned:!!e.constant,userCreated:false,
+lorebookSource:bookName,
+}));
+integrateMemories(core.store,mems);
+totalMems+=mems.length;
+console.log('[NM] lorebook import:',bookName,'-',mems.length,'memories');
+}
+if(!totalMems){setStatus('Keine aktivierten Einträge gefunden',true);return}
+updateMemoryConnections(core.store);
+await saveStore(core.store);
+updateUI();
+setStatus(`✓ ${totalMems} Memories aus ${selected_world_info.length} Lorebook(s) importiert`);
+const panel=document.querySelector('.nm-browser-panel');
+if(panel){panel.innerHTML=renderMemoryBrowser();attachBrowserEvents(panel);}
 }
 
 async function doExport(){

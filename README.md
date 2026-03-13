@@ -147,6 +147,12 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.9.0
+- **Lorebook Integration**: Aktive Lorebooks (World Info) direkt als Memories importieren — ein Klick importiert alle aktivierten Einträge als semantische Memories. Weltwissen, Charaktere, Städte, Fraktionen sind sofort im Memory-System verfügbar.
+- **📚 Lorebook-Badge**: Memories aus Lorebooks zeigen ein `📚`-Badge mit dem Lorebook-Namen als Tooltip im Memory Browser.
+- **Sauberer Re-Import**: Ein erneuter Import ersetzt automatisch alle bestehenden Lorebook-Memories (kein Duplikatproblem). Lorebook-Änderungen können jederzeit neu eingelesen werden.
+- **Kluge Konvertierung**: Lorebook-Einträge werden direkt ohne KI-Aufruf konvertiert — `comment` als Titel, `key[]` als Entities/Keywords, `constant`-Einträge werden als wichtig (1.0) und gepinnt markiert, hohe Stabilität (3.0) für Weltwissen-Fakten.
+
 ### v1.8.0
 - **Tiered Memory Injection**: Der KI-Kontext ist jetzt strukturiert statt eine flache Liste — `[Character Essence]` (Digest), `[Current Emotional State]`, `[Defining Memories — High Emotional Weight]` (intensive Memories mit ★-Labels), `[Recent Events]` (episodische Memories), `[Background Knowledge]` (Fakten & Beziehungen), `[Sudden Recall]` (Flashback). Die KI weiß sofort WIE sie jede Erinnerung verwenden soll.
 - **Emotional State Tracking**: Automatische Berechnung des aktuellen Gemütszustands (`joyful` / `content` / `calm` / `conflicted` / `troubled` / `grieving`) + Trend-Signal (`trending hopeful` / `darkening`) — injiziert als `[Current Emotional State: troubled, darkening]` vor den Memories.
