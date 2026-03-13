@@ -93,6 +93,16 @@ activationThreshold:this.settings.activationThreshold,
 halfLifeHours:this.settings.halfLifeDays*24,
 emotionFactor:this.settings.emotionFactor,
 });
+
+// Gepinnte Memories immer einschliessen (falls nicht bereits im Ergebnis)
+const resultIds=new Set(results.map(r=>r.memory.id));
+const t=now();
+for(const m of Object.values(this.store.memories)){
+if(m.pinned&&!resultIds.has(m.id)){
+results.push({memory:m,score:1.0,activation:1.0,retrievability:m.retrievability});
+}
+}
+
 if(!results.length)return'';
 
 // Reinforcement

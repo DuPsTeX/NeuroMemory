@@ -137,7 +137,9 @@ createdAt:t,
 lastAccessedAt:t,
 lastReinforcedAt:t,
 sourceMessageIds:[lastMsgIdx-1,lastMsgIdx],
-connections:[]
+connections:[],
+pinned:false,
+userCreated:false,
 };
 results.push(mem);
 }

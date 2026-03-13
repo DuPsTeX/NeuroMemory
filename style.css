@@ -26,6 +26,39 @@
 .nm-status-error{color:#ff6b6b;background:rgba(255,50,50,.1)}
 .redWarning{color:var(--warning)!important;border-color:var(--warning)!important}
 
+/* Memory Browser - Search & Filter */
+.nm-browser-controls{margin:4px 0 8px;display:flex;flex-direction:column;gap:4px}
+.nm-search-input{width:100%!important;padding:4px 8px!important;font-size:.85em!important}
+.nm-type-filters{display:flex;flex-wrap:wrap;gap:3px}
+.nm-filter-btn{padding:2px 8px;font-size:.75em;border-radius:12px;border:1px solid var(--SmartThemeBorderColor);background:var(--black10a);color:var(--SmartThemeBodyColor);cursor:pointer;transition:all .15s}
+.nm-filter-btn:hover{background:var(--black20a)}
+.nm-filter-btn.active{background:var(--SmartThemeQuoteColor);color:var(--white);border-color:var(--SmartThemeQuoteColor)}
+
+/* Memory Actions (Pin/Edit/Delete) */
+.nm-mem-actions{display:flex;gap:2px;margin-left:auto}
+.nm-action-btn{background:none;border:none;cursor:pointer;padding:1px 3px;font-size:.85em;opacity:.6;border-radius:3px;line-height:1}
+.nm-action-btn:hover{opacity:1;background:var(--black20a)}
+.nm-del-btn{color:#ff6b6b!important}
+.nm-del-btn:hover{background:rgba(255,50,50,.15)!important}
+.nm-user-badge{font-size:.8em;margin:0 2px;opacity:.7;title:'Manuell erstellt'}
+
+/* Gepinnte Memories */
+.nm-pinned{border-left-color:#ffd700!important;background:rgba(255,215,0,.05)!important}
+
+/* Memory Inline Editing */
+.nm-edit-textarea{width:100%!important;min-height:60px;resize:vertical;font-size:.85em!important;padding:4px 6px!important;margin:2px 0;box-sizing:border-box}
+.nm-edit-actions{display:flex;gap:4px;margin:3px 0}
+.nm-edit-actions .menu_button{padding:2px 8px;font-size:.8em}
+
+/* Manuell Memory hinzufügen */
+.nm-add-drawer{margin:6px 0}
+.nm-add-toggle{padding:5px 8px!important;font-size:.85em;background:var(--black10a);border-radius:4px}
+.nm-add-textarea{width:100%!important;min-height:60px;resize:vertical;font-size:.85em!important;padding:5px 8px!important;box-sizing:border-box;margin:4px 0}
+.nm-add-row{display:flex;gap:8px;align-items:center;margin:3px 0;flex-wrap:wrap}
+.nm-add-select{flex:1;min-width:140px;padding:3px 6px!important;font-size:.82em!important}
+.nm-add-imp-label{display:flex;align-items:center;gap:4px;font-size:.82em;white-space:nowrap}
+.nm-imp-range{width:70px;cursor:pointer}
+
 /* Extraction Prompt Editor */
 .nm-prompt-drawer{margin:6px 0}
 .nm-prompt-toggle{padding:5px 8px!important;font-size:.85em;background:var(--black10a);border-radius:4px}

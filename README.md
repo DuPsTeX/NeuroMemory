@@ -147,6 +147,12 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.5.0
+- **Memory Pinning**: Jede Memory kann jetzt mit 📌 angepinnt werden. Gepinnte Memories werden **immer** in den Prompt injiziert (unabhängig vom Relevanz-Score), verfallen nicht durch den Decay-Algorithmus, und werden beim maxMemories-Limit nicht gelöscht. Ideal für wichtige Backstory-Fakten.
+- **Manuell Memories hinzufügen**: Neues aufklappbares "Memory manuell hinzufügen"-Panel im Debug-Bereich. Nutzer können Memories direkt eingeben (Content, Typ, Wichtigkeit, Entities) und optional sofort anpinnen. Manuell erstellte Memories sind mit ✋ markiert.
+- **Inline Memory-Editing**: Jede Memory bekommt einen ✏️-Button zum direkten Bearbeiten des Inhalts — ohne Löschen und Neu-Erstellen.
+- **Suche & Filter im Memory Browser**: Neues Suchfeld und Typ-Filter-Buttons (Alle / Episodic / Semantic / Emotional / Relational / Pinned / Manuell) über der Memory-Liste.
+
 ### v1.4.0
 - **Injection-Fix (kritisch)**: Injection funktionierte nicht bei deutschsprachigen Chats, weil gespeicherte Memories englische Keywords haben (Extraction-Prompt ist Englisch), aber User-Nachrichten auf Deutsch sind → kein BM25-Treffer. Zwei Fixes: (1) BM25 läuft jetzt zusätzlich auf dem Memory-Content (nicht nur Keywords), (2) Fallback: wenn gar kein Query-Signal → werden die Top-K wichtigsten/neuesten Memories trotzdem injiziert. Außerdem: Entity-Matching ist jetzt case-insensitive und prüft auch direkte Namensnennungen im Message-Text.
 - **Memory löschen**: Im "Show Memories"-Panel hat jede Memory jetzt einen ✕-Button zum einzelnen Löschen.

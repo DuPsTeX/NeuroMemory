@@ -1,6 +1,8 @@
 import{NeuroMemoryCore,defaultSettings}from'./src/core.js';
-import{exportStore,importStore,loadStore,deleteStore,setContextGetter,removeMemory,saveStore}from'./src/store.js';
+import{exportStore,importStore,loadStore,deleteStore,setContextGetter,removeMemory,saveStore,addMemory,updateMemory}from'./src/store.js';
 import{extractMemories,setExtractionPrompt,getExtractionPrompt,DEFAULT_EXTRACT_SYSTEM}from'./src/extraction.js';
+import{uid,extractKeywords}from'./src/utils.js';
+import{updateMemoryConnections}from'./src/network.js';
 
 const MODULE_NAME='neuro-memory';
 const core=new NeuroMemoryCore();
@@ -300,6 +302,37 @@ return`
 <button id="nm_import" class="menu_button">Import</button>
 <button id="nm_clearAll" class="menu_button redWarning">Clear All</button>
 </div>
+
+<div class="inline-drawer nm-add-drawer">
+<div class="inline-drawer-toggle inline-drawer-header nm-add-toggle">
+<span>+ Memory manuell hinzufügen</span>
+<div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
+</div>
+<div class="inline-drawer-content">
+<textarea id="nm_newMemContent" class="text_pole nm-add-textarea" rows="3" placeholder="Inhalt der Erinnerung... (z.B. 'Veyra ist eine Waldelfin mit magischen Fähigkeiten')"></textarea>
+<div class="nm-add-row">
+<select id="nm_newMemType" class="text_pole nm-add-select">
+<option value="semantic">Semantic (Fakt/Wissen)</option>
+<option value="episodic">Episodic (Ereignis)</option>
+<option value="emotional">Emotional (Gefühl)</option>
+<option value="relational">Relational (Beziehung)</option>
+</select>
+<label class="nm-add-imp-label">Wichtigkeit:
+<input type="range" id="nm_newMemImportance" min="0" max="1" step="0.1" value="0.8" class="nm-imp-range">
+<span id="nm_impValue">0.8</span>
+</label>
+</div>
+<input id="nm_newMemEntities" class="text_pole" placeholder="Entities (kommagetrennt): Veyra, Tay" style="margin:3px 0">
+<div style="display:flex;align-items:center;gap:6px;margin-top:4px">
+<label class="checkbox_label" style="font-size:.85em">
+<input type="checkbox" id="nm_newMemPinned">
+<span>📌 Gleich anpinnen</span>
+</label>
+<button id="nm_addMemory" class="menu_button" style="margin-left:auto">+ Hinzufügen</button>
+</div>
+</div>
+</div>
+
 <div id="nm_debugOutput" class="nm-debug"></div>
 
 </div></div></div>`;
@@ -319,11 +352,19 @@ if(!isNaN(v)){core.settings[n]=v;saveSettings()}
 }
 
 on('nm_testExtraction','click',()=>doTestExtraction());
-on('nm_showMemories','click',()=>showMemoryBrowser());
+on('nm_showMemories','click',()=>{_browserFilter={type:'all',search:''};showMemoryBrowser();});
 on('nm_showLastInjected','click',()=>showLastInjected());
 on('nm_export','click',()=>doExport());
 on('nm_import','click',()=>doImport());
 on('nm_clearAll','click',()=>doClear());
+on('nm_addMemory','click',()=>doAddMemory());
+
+// Importance-Slider Anzeige
+const impRange=document.getElementById('nm_newMemImportance');
+const impVal=document.getElementById('nm_impValue');
+if(impRange&&impVal){
+impRange.addEventListener('input',()=>{impVal.textContent=parseFloat(impRange.value).toFixed(1)});
+}
 
 // Extraction-Prompt Editor
 const promptEl=document.getElementById('nm_extractPrompt');
@@ -372,22 +413,57 @@ statsEl.innerHTML=`
 <div class="nm-stat-row"><b>Last injected:</b> ${s.lastInjectedCount} memories</div>`;
 }
 
-function renderMemoryBrowser(){
-if(!core.store)return;
-const mems=Object.values(core.store.memories).sort((a,b)=>b.createdAt-a.createdAt);
+// Browser-Filter-State
+let _browserFilter={type:'all',search:''};
+
+function renderMemoryBrowser(filter){
+if(!filter)filter=_browserFilter;
+if(!core.store)return'';
+let mems=Object.values(core.store.memories).sort((a,b)=>b.createdAt-a.createdAt);
+// Filter anwenden
+if(filter.type==='pinned')mems=mems.filter(m=>m.pinned);
+else if(filter.type==='user')mems=mems.filter(m=>m.userCreated);
+else if(filter.type!=='all')mems=mems.filter(m=>m.type===filter.type);
+if(filter.search){
+const q=filter.search.toLowerCase();
+mems=mems.filter(m=>m.content.toLowerCase().includes(q)||m.entities.some(e=>e.toLowerCase().includes(q)));
+}
 const ents=Object.values(core.store.entities).sort((a,b)=>b.mentionCount-a.mentionCount);
-let html='<h3>Memories ('+mems.length+')</h3><div class="nm-mem-list">';
-for(const m of mems.slice(0,100)){
+const total=Object.keys(core.store.memories).length;
+
+// Filter-Controls
+const types=['all','episodic','semantic','emotional','relational','pinned','user'];
+const typeLabels={all:'Alle',episodic:'Episodic',semantic:'Semantic',emotional:'Emotional',relational:'Relational',pinned:'📌 Pinned',user:'✋ Manuell'};
+let filterBtns=types.map(t=>`<button class="nm-filter-btn${filter.type===t?' active':''}" data-action="filter" data-type="${t}">${typeLabels[t]}</button>`).join('');
+
+let html=`<div class="nm-browser-controls">
+<input id="nm_memSearch" class="text_pole nm-search-input" placeholder="Suchen..." value="${escHtml(filter.search)}">
+<div class="nm-type-filters">${filterBtns}</div>
+</div>
+<h3>Memories (${mems.length}/${total})</h3><div class="nm-mem-list">`;
+
+for(const m of mems.slice(0,150)){
 const age=((Date.now()-m.createdAt)/86400000).toFixed(1);
-html+=`<div class="nm-mem-item nm-type-${m.type}" data-memid="${escHtml(m.id)}">
-<div class="nm-mem-header"><span class="nm-badge">${m.type}</span> <span class="nm-imp">imp:${m.importance.toFixed(2)}</span> <span class="nm-ret">ret:${m.retrievability.toFixed(2)}</span> <span class="nm-age">${age}d</span>
-<button class="nm-del-btn menu_button" data-memid="${escHtml(m.id)}" title="Memory löschen" style="margin-left:auto;padding:1px 6px;font-size:.75em;color:#ff6b6b;border-color:#ff6b6b">✕</button>
+const pinLabel=m.pinned?'📌':'📍';
+const pinTitle=m.pinned?'Unpin':'Pin (immer injizieren)';
+const userBadge=m.userCreated?'<span class="nm-user-badge" title="Manuell erstellt">✋</span>':'';
+html+=`<div class="nm-mem-item nm-type-${m.type}${m.pinned?' nm-pinned':''}" data-memid="${escHtml(m.id)}">
+<div class="nm-mem-header">
+<span class="nm-badge">${m.type}</span>${userBadge}
+<span class="nm-imp">imp:${m.importance.toFixed(2)}</span>
+<span class="nm-ret">ret:${m.retrievability.toFixed(2)}</span>
+<span class="nm-age">${age}d</span>
+<div class="nm-mem-actions">
+<button class="nm-action-btn" data-action="pin" data-memid="${escHtml(m.id)}" title="${pinTitle}">${pinLabel}</button>
+<button class="nm-action-btn" data-action="edit" data-memid="${escHtml(m.id)}" title="Bearbeiten">✏️</button>
+<button class="nm-action-btn nm-del-btn" data-action="delete" data-memid="${escHtml(m.id)}" title="Löschen">✕</button>
+</div>
 </div>
 <div class="nm-mem-content">${escHtml(m.content)}</div>
 <div class="nm-mem-meta">Entities: ${m.entities.join(', ')} | Keywords: ${m.keywords.join(', ')}</div>
 </div>`;
 }
-html+='</div><h3>Entities ('+ents.length+')</h3><div class="nm-ent-list">';
+html+=`</div><h3>Entities (${ents.length})</h3><div class="nm-ent-list">`;
 for(const e of ents.slice(0,50)){
 html+=`<div class="nm-ent-item"><b>${escHtml(e.name)}</b> [${e.type}] mentions:${e.mentionCount}</div>`;
 }
@@ -400,20 +476,101 @@ if(!core.store){showDebug('No character loaded');return}
 const debugEl=document.getElementById('nm_debugOutput');
 if(!debugEl)return;
 debugEl.innerHTML=`<div class="nm-browser-panel">${renderMemoryBrowser()}</div>`;
-// Event-Delegation: ein Listener auf dem Container
-debugEl.querySelector('.nm-browser-panel').addEventListener('click',async e=>{
-const btn=e.target.closest('.nm-del-btn');
+const panel=debugEl.querySelector('.nm-browser-panel');
+
+// Suche
+const searchEl=panel.querySelector('#nm_memSearch');
+if(searchEl){
+searchEl.addEventListener('input',()=>{
+_browserFilter.search=searchEl.value;
+panel.innerHTML=renderMemoryBrowser();
+attachBrowserEvents(panel);
+});
+}
+
+attachBrowserEvents(panel);
+}
+
+function attachBrowserEvents(panel){
+// Suchfeld neu binden nach re-render
+const searchEl=panel.querySelector('#nm_memSearch');
+if(searchEl&&!searchEl._nmBound){
+searchEl._nmBound=true;
+searchEl.addEventListener('input',()=>{
+_browserFilter.search=searchEl.value;
+panel.innerHTML=renderMemoryBrowser();
+attachBrowserEvents(panel);
+});
+}
+
+// Event-Delegation fuer alle Actions
+panel.onclick=async e=>{
+const btn=e.target.closest('[data-action]');
 if(!btn||!core.store)return;
 e.stopPropagation();
+const action=btn.dataset.action;
 const memId=btn.dataset.memid;
+
+if(action==='filter'){
+_browserFilter.type=btn.dataset.type;
+panel.innerHTML=renderMemoryBrowser();
+attachBrowserEvents(panel);
+return;
+}
+
+if(action==='pin'){
 const mem=core.store.memories[memId];
 if(!mem)return;
-if(!confirm(`Memory löschen?\n"${mem.content.substring(0,80)}..."`))return;
+updateMemory(core.store,memId,{pinned:!mem.pinned});
+await saveStore(core.store);
+panel.innerHTML=renderMemoryBrowser();
+attachBrowserEvents(panel);
+return;
+}
+
+if(action==='edit'){
+const item=btn.closest('.nm-mem-item');
+const contentEl=item.querySelector('.nm-mem-content');
+const oldText=contentEl.textContent;
+contentEl.innerHTML=`<textarea class="nm-edit-textarea text_pole">${escHtml(oldText)}</textarea>
+<div class="nm-edit-actions">
+<button class="menu_button" data-action="save-edit" data-memid="${escHtml(memId)}">✓ Speichern</button>
+<button class="menu_button" data-action="cancel-edit">✗ Abbrechen</button>
+</div>`;
+const ta=contentEl.querySelector('textarea');
+if(ta){ta.focus();ta.setSelectionRange(ta.value.length,ta.value.length)}
+return;
+}
+
+if(action==='save-edit'){
+const ta=btn.closest('.nm-mem-item')?.querySelector('.nm-edit-textarea');
+if(!ta)return;
+const newContent=ta.value.trim();
+if(newContent){updateMemory(core.store,memId,{content:newContent});}
+await saveStore(core.store);
+panel.innerHTML=renderMemoryBrowser();
+attachBrowserEvents(panel);
+return;
+}
+
+if(action==='cancel-edit'){
+panel.innerHTML=renderMemoryBrowser();
+attachBrowserEvents(panel);
+return;
+}
+
+if(action==='delete'){
+const mem=core.store.memories[memId];
+if(!mem)return;
+if(!confirm(`Memory löschen?\n"${mem.content.substring(0,80)}"`))return;
 removeMemory(core.store,memId);
 await saveStore(core.store);
 updateUI();
-showMemoryBrowser();// neu rendern
-});
+panel.innerHTML=renderMemoryBrowser();
+attachBrowserEvents(panel);
+return;
+}
+};
 }
 
 function showLastInjected(){
@@ -426,6 +583,53 @@ html+=`<div class="nm-mem-item nm-type-${r.memory.type}">
 <div class="nm-mem-content">${escHtml(r.memory.content)}</div></div>`;
 }
 showPopup('Last Injected Memories',html);
+}
+
+async function doAddMemory(){
+const contentEl=document.getElementById('nm_newMemContent');
+const content=contentEl?contentEl.value.trim():'';
+if(!content){setStatus('Bitte Inhalt eingeben',true);return}
+if(!core.store||!core.charId){setStatus('Kein Charakter geladen',true);return}
+const type=document.getElementById('nm_newMemType')?.value||'semantic';
+const importance=parseFloat(document.getElementById('nm_newMemImportance')?.value||'0.8');
+const entitiesRaw=document.getElementById('nm_newMemEntities')?.value||'';
+const entities=entitiesRaw.split(',').map(s=>s.trim()).filter(Boolean);
+const pinned=document.getElementById('nm_newMemPinned')?.checked||false;
+const t=Date.now();
+const mem={
+id:uid(),
+characterId:core.charId,
+type,
+content,
+entities,
+keywords:extractKeywords(content),
+importance:isNaN(importance)?0.8:Math.max(0,Math.min(1,importance)),
+emotionalValence:0,
+emotionalIntensity:0,
+stability:2.0,// hohe Stabilitaet fuer manuell erstellte Memories
+retrievability:1.0,
+accessCount:0,
+createdAt:t,
+lastAccessedAt:t,
+lastReinforcedAt:t,
+sourceMessageIds:[],
+connections:[],
+pinned,
+userCreated:true,
+};
+addMemory(core.store,mem);
+updateMemoryConnections(core.store);
+await saveStore(core.store);
+updateUI();
+// Formular leeren
+if(contentEl)contentEl.value='';
+const entEl=document.getElementById('nm_newMemEntities');if(entEl)entEl.value='';
+const pinnedCb=document.getElementById('nm_newMemPinned');if(pinnedCb)pinnedCb.checked=false;
+setStatus(`Memory hinzugefügt: "${content.substring(0,50)}..."`);
+// Browser aktualisieren falls sichtbar
+const panel=document.querySelector('.nm-browser-panel');
+if(panel){panel.innerHTML=renderMemoryBrowser();attachBrowserEvents(panel);}
+console.log('[NM] manual memory added:',mem.id,content.substring(0,50));
 }
 
 async function doExport(){

@@ -15,6 +15,7 @@ const t=now();
 const mems=getAllMemories(store);
 const toRemove=[];
 for(const m of mems){
+if(m.pinned)continue;// Gepinnte Memories sind unvergesslich
 const effStab=m.stability*(1+(m.emotionalIntensity||0)*emotionFactor);
 m.retrievability=expDecay(hrs(t-m.lastReinforcedAt),effStab,halfLifeHours);
 if(m.retrievability<0.05)toRemove.push(m.id);
@@ -98,8 +99,9 @@ updateMemoryConnections(store);
 // 4. Limit enforcen
 const mems=getAllMemories(store);
 if(mems.length>maxMemories){
-const sorted=[...mems].sort((a,b)=>a.retrievability-b.retrievability);
-const excess=sorted.slice(0,mems.length-maxMemories);
+// Gepinnte Memories nie loeschen, nur unpinnte nach Retrievability priorisieren
+const unpinned=[...mems].filter(m=>!m.pinned).sort((a,b)=>a.retrievability-b.retrievability);
+const excess=unpinned.slice(0,mems.length-maxMemories);
 for(const m of excess)removeMemory(store,m.id);
 }
 store.meta.lastConsolidation=now();
