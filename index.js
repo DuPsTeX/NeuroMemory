@@ -157,6 +157,13 @@ if(c.chat.length<2){console.log('[NM] skipped: chat.length=',c.chat.length,'(nee
 
 console.log('[NM] chat has',c.chat.length,'messages, scheduling extraction...');
 
+// Selective Reinforcement: KI-Antwort gegen injizierte Memories pruefen
+const lastMsg=c.chat[c.chat.length-1];
+if(lastMsg&&!lastMsg.is_user&&lastMsg.mes){
+core.applySelectiveReinforcement(lastMsg.mes);
+saveStore(core.store).catch(e=>console.warn('[NM] save after selective reinforce failed',e));
+}
+
 // Chat-Snapshot sichern (Kopie der relevanten Daten)
 const chatSnapshot=c.chat.map(m=>({is_user:m.is_user,name:m.name,mes:m.mes}));
 
@@ -195,7 +202,9 @@ if(c.chat[i].is_user){lastUserMsg=c.chat[i].mes;break}
 if(!lastUserMsg){console.log('[NM] inject SKIP: no user message found');return;}
 console.log('[NM] inject: query=',lastUserMsg.substring(0,80));
 
-const memContext=core.retrieveForMessage(lastUserMsg);
+// Chat-Messages fuer Themen-Tracking uebergeben
+const chatMsgs=c.chat.map(m=>({is_user:m.is_user,name:m.name,mes:m.mes}));
+const{context:memContext,hint}=core.retrieveForMessage(lastUserMsg,chatMsgs);
 console.log('[NM] inject: memContext length=',memContext?.length||0,', lastInjected=',core.lastInjected.length);
 if(!memContext){console.log('[NM] inject SKIP: retrieveForMessage returned empty');return;}
 
@@ -209,11 +218,10 @@ core.settings.injectionRole
 );
 console.log('[NM] Injected',core.lastInjected.length,'memories into prompt (depth='+core.settings.injectionDepth+')');
 
-// Proaktive Memory-Nutzung: optionaler Hinweis ans Modell
-if(core.settings.proactivePrompt){
-const hint='[Memory Recall Active: Naturally weave relevant memories into your response without explicitly labeling them as "memories" or "recollections".]';
+// Dynamic Injection Hint (kontextabhaengig statt generisch)
+if(hint){
 c.setExtensionPrompt(MODULE_NAME+'_hint',hint,0,0,false,0);// IN_PROMPT
-console.log('[NM] injected proactive prompt hint');
+console.log('[NM] injected dynamic hint:',hint.substring(0,80));
 }else{
 c.setExtensionPrompt(MODULE_NAME+'_hint','',0,0,false,0);
 }
@@ -427,7 +435,7 @@ if(!isNaN(v)){core.settings[n]=v;saveSettings()}
 
 on('nm_proactivePrompt','change',e=>{core.settings.proactivePrompt=e.target.checked;saveSettings()});
 on('nm_testExtraction','click',()=>doTestExtraction());
-on('nm_showMemories','click',()=>{_browserFilter={type:'all',search:''};showMemoryBrowser();});
+on('nm_showMemories','click',()=>{_browserFilter={type:'all',search:''};_browserShowCount=50;showMemoryBrowser();});
 on('nm_importCard','click',()=>doImportFromCard());
 on('nm_doTextImport','click',()=>doImportFromText());
 on('nm_importLorebook','click',()=>doImportFromLorebook());
@@ -524,6 +532,8 @@ if(lbRow)lbRow.style.display=core.store?'':'none';
 
 // Browser-Filter-State
 let _browserFilter={type:'all',search:''};
+let _browserShowCount=50;// Virtuelles Scrolling: zeige nur N Memories initial
+let _searchDebounceTimer=null;
 
 function renderTimeline(memories){
 const sorted=[...memories].filter(m=>m.emotionalIntensity>0.1).sort((a,b)=>a.createdAt-b.createdAt).slice(-40);
@@ -589,7 +599,8 @@ ${digestHtml}
 ${timelineHtml}
 <h3>Memories (${mems.length}/${total})</h3><div class="nm-mem-list">`;
 
-for(const m of mems.slice(0,150)){
+const showCount=Math.min(mems.length,_browserShowCount);
+for(const m of mems.slice(0,showCount)){
 const age=((Date.now()-m.createdAt)/86400000).toFixed(1);
 const pinLabel=m.pinned?'📌':'📍';
 const pinTitle=m.pinned?'Unpin':'Pin (immer injizieren)';
@@ -614,6 +625,9 @@ html+=`<div class="nm-mem-item nm-type-${m.type}${m.pinned?' nm-pinned':''}" dat
 <div class="nm-mem-content">${escHtml(m.content)}</div>
 <div class="nm-mem-meta">Entities: ${m.entities.join(', ')} | Keywords: ${m.keywords.join(', ')}</div>
 </div>`;
+}
+if(mems.length>showCount){
+html+=`<button class="menu_button nm-load-more" data-action="load-more" style="width:100%;margin:8px 0;font-size:.85em">▼ ${mems.length-showCount} weitere Memories laden</button>`;
 }
 html+=`</div><h3>Entities (${ents.length})</h3><div class="nm-ent-list">`;
 for(const e of ents.slice(0,50)){
@@ -651,14 +665,21 @@ panel.querySelector('#nm_memSearch')?.focus();
 }
 
 function attachBrowserEvents(panel){
-// Suchfeld neu binden nach re-render
+// Suchfeld mit Debounce (300ms) binden
 const searchEl=panel.querySelector('#nm_memSearch');
 if(searchEl&&!searchEl._nmBound){
 searchEl._nmBound=true;
 searchEl.addEventListener('input',()=>{
+if(_searchDebounceTimer)clearTimeout(_searchDebounceTimer);
+_searchDebounceTimer=setTimeout(()=>{
 _browserFilter.search=searchEl.value;
+_browserShowCount=50;// Reset bei neuer Suche
 panel.innerHTML=renderMemoryBrowser();
 attachBrowserEvents(panel);
+// Fokus+Cursor zurueck auf Suchfeld
+const newSearch=panel.querySelector('#nm_memSearch');
+if(newSearch){newSearch.focus();newSearch.setSelectionRange(newSearch.value.length,newSearch.value.length)}
+},300);
 });
 }
 
@@ -672,6 +693,14 @@ const memId=btn.dataset.memid;
 
 if(action==='filter'){
 _browserFilter.type=btn.dataset.type;
+_browserShowCount=50;// Reset bei Filterwechsel
+panel.innerHTML=renderMemoryBrowser();
+attachBrowserEvents(panel);
+return;
+}
+
+if(action==='load-more'){
+_browserShowCount+=50;
 panel.innerHTML=renderMemoryBrowser();
 attachBrowserEvents(panel);
 return;
@@ -1025,6 +1054,76 @@ function escHtmlAttr(s){
 return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
 
+// Message Lifecycle Hooks: Reagiere auf geloeschte, editierte und geswipte Nachrichten
+async function onMessageDeleted(msgIdx){
+if(!core.store||!core.settings.enabled)return;
+console.log('[NM] MESSAGE_DELETED, idx:',msgIdx);
+const msgIdStr=String(msgIdx);
+let removed=0;
+for(const[id,m]of Object.entries(core.store.memories)){
+if(m.sourceMessageIds&&m.sourceMessageIds.includes(msgIdStr)){
+removeMemory(core.store,id);
+removed++;
+}
+}
+if(removed){
+updateMemoryConnections(core.store);
+await saveStore(core.store);
+updateUI();
+console.log(`[NM] Removed ${removed} memories linked to deleted message ${msgIdx}`);
+setStatus(`${removed} Memory(s) mit gelöschter Nachricht entfernt`);
+}
+}
+
+async function onMessageSwiped(msgIdx){
+if(!core.store||!core.settings.enabled)return;
+console.log('[NM] MESSAGE_SWIPED, idx:',msgIdx);
+// Swipe = alte Antwort geloescht, neue kommt — alte Memories entfernen
+const msgIdStr=String(msgIdx);
+let removed=0;
+for(const[id,m]of Object.entries(core.store.memories)){
+if(m.sourceMessageIds&&m.sourceMessageIds.includes(msgIdStr)){
+removeMemory(core.store,id);
+removed++;
+}
+}
+if(removed){
+updateMemoryConnections(core.store);
+await saveStore(core.store);
+updateUI();
+console.log(`[NM] Removed ${removed} memories from swiped message ${msgIdx}`);
+}
+}
+
+async function onMessageEdited(msgIdx){
+if(!core.store||!core.settings.enabled||!core._generateFn)return;
+console.log('[NM] MESSAGE_EDITED, idx:',msgIdx);
+const c=getCtx();
+if(!c||!c.chat||!c.chat[msgIdx])return;
+// Alte Memories fuer diese Nachricht entfernen
+const msgIdStr=String(msgIdx);
+for(const[id,m]of Object.entries(core.store.memories)){
+if(m.sourceMessageIds&&m.sourceMessageIds.includes(msgIdStr)){
+removeMemory(core.store,id);
+}
+}
+// Neu-Extraktion aus der editierten Nachricht + Kontext
+const start=Math.max(0,msgIdx-1);
+const end=Math.min(c.chat.length,msgIdx+2);
+const chatSlice=c.chat.slice(start,end).map(m=>({is_user:m.is_user,name:m.name,mes:m.mes}));
+try{
+const newMems=await extractMemories(core._generateFn,chatSlice,core.charId,chatSlice.length);
+if(newMems.length){
+integrateMemories(core.store,newMems);
+updateMemoryConnections(core.store);
+await saveStore(core.store);
+updateUI();
+console.log(`[NM] Re-extracted ${newMems.length} memories from edited message ${msgIdx}`);
+setStatus(`${newMems.length} Memory(s) aus editierter Nachricht aktualisiert`);
+}
+}catch(e){console.error('[NM] MESSAGE_EDITED extraction error',e)}
+}
+
 // Eigene Generate-Funktion die reasoning_content (DeepSeek-Reasoner) korrekt verarbeitet
 async function nmGenerate(opts){
 const ctx=getCtx();
@@ -1129,7 +1228,11 @@ c.eventSource.on(c.eventTypes.MESSAGE_RECEIVED,onMessageReceived);
 // GENERATION_STARTED feuert fuer ALLE APIs (inkl. OpenAI/Chat-Completions)
 // GENERATE_BEFORE_COMBINE_PROMPTS feuert NUR fuer Text-Completion-APIs - daher nicht verwendbar
 c.eventSource.on(c.eventTypes.GENERATION_STARTED,onGenerateBefore);
-console.log('[NM] events registered');
+// Message Lifecycle: Reagiere auf Aenderungen im Chat
+if(c.eventTypes.MESSAGE_DELETED)c.eventSource.on(c.eventTypes.MESSAGE_DELETED,onMessageDeleted);
+if(c.eventTypes.MESSAGE_SWIPED)c.eventSource.on(c.eventTypes.MESSAGE_SWIPED,onMessageSwiped);
+if(c.eventTypes.MESSAGE_EDITED)c.eventSource.on(c.eventTypes.MESSAGE_EDITED,onMessageEdited);
+console.log('[NM] events registered (incl. lifecycle hooks)');
 
 // Initial laden wenn Chat bereits offen
 const charId=getCharId(c);

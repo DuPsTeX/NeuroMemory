@@ -242,3 +242,83 @@ m.stability=m.stability*1.5+0.1;
 m.retrievability=1.0;
 }
 }
+
+// Selective Reinforcement: Nur Memories boosten die die KI tatsaechlich benutzt hat
+export function selectiveReinforce(results,responseText){
+if(!responseText||!results.length)return;
+const t=now();
+const respLower=responseText.toLowerCase();
+const respTokens=new Set(tokenize(responseText));
+for(const r of results){
+const m=r.memory;
+// Check: Hat die KI Entities oder Keywords aus dieser Memory erwaehnt?
+const entityHit=m.entities.some(e=>respLower.includes(e.toLowerCase()));
+const keywordHits=(m.keywords||[]).filter(k=>respTokens.has(k)).length;
+const contentWords=tokenize(m.content);
+const contentOverlap=contentWords.filter(w=>respTokens.has(w)).length;
+const used=entityHit||keywordHits>=2||contentOverlap>=3;
+if(used){
+// KI hat diese Memory aufgegriffen → extra Boost
+m.stability=m.stability*1.2+0.05;
+r._used=true;
+console.log('[NM] selective: USED',m.content.substring(0,50));
+}else{
+// Injiziert aber ignoriert → leichter Abzug
+m.stability=Math.max(0.5,m.stability*0.95);
+r._used=false;
+}
+}
+}
+
+// Themen aus den letzten Nachrichten extrahieren (ohne LLM, rein heuristisch)
+export function extractConversationThemes(messages,maxThemes=5){
+if(!messages||messages.length<2)return[];
+// Nimm die letzten 6 Nachrichten
+const recent=messages.slice(-6);
+const freq=new Map;
+for(const msg of recent){
+const tokens=tokenize(msg.mes||'');
+for(const t of tokens){
+if(t.length>2)freq.set(t,(freq.get(t)||0)+1);
+}
+}
+// Top-Themen nach Haeufigkeit (nur Woerter die in mind. 2 Messages vorkommen)
+return[...freq.entries()]
+.filter(([,c])=>c>=2)
+.sort((a,b)=>b[1]-a[1])
+.slice(0,maxThemes)
+.map(([w])=>w);
+}
+
+// Dynamic Injection Hint basierend auf injiziertem Kontext
+export function buildDynamicHint(results,store){
+if(!results.length)return'';
+const parts=[];
+// Emotionaler Zustand
+const emotState=computeEmotionalState(store);
+if(emotState){
+const state=emotState.replace('Current Emotional State: ','');
+parts.push(`The character's emotional state is ${state}`);
+}
+// Surprise Memory
+const surprise=results.find(r=>r.isSurprise);
+if(surprise){
+parts.push(`An unexpected memory just surfaced — let it subtly color the response`);
+}
+// Dominante Memory-Typen
+const types=results.map(r=>r.memory.type);
+const hasEmotional=types.includes('emotional');
+const hasRelational=types.includes('relational');
+if(hasEmotional&&hasRelational){
+parts.push(`Both emotional memories and relationship dynamics are active — weave them naturally`);
+}else if(hasEmotional){
+parts.push(`Emotionally charged memories are active — reflect the underlying feelings`);
+}
+// Intensive Memories
+const intense=results.filter(r=>(r.memory.emotionalIntensity||0)>=0.7);
+if(intense.length){
+parts.push(`${intense.length} deeply impactful ${intense.length===1?'memory is':'memories are'} present — these should influence tone and behavior`);
+}
+if(!parts.length)return'[Memory Recall Active: Naturally weave relevant memories into your response without explicitly labeling them as "memories" or "recollections".]';
+return`[Memory Recall Active: ${parts.join('. ')}. Weave these naturally into the response without labeling them as memories.]`;
+}

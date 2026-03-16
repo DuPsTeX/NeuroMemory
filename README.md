@@ -147,6 +147,13 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.11.0
+- **Selective Reinforcement**: Memories werden nur noch verstärkt wenn die KI sie tatsächlich in ihrer Antwort aufgegriffen hat (Entity/Keyword-Matching gegen die AI-Response). Ignorierte Memories verlieren leicht an Stabilität — das Memory-System lernt automatisch was wirklich relevant ist.
+- **Message Lifecycle Hooks**: Reagiert auf `MESSAGE_DELETED`, `MESSAGE_SWIPED` und `MESSAGE_EDITED` — gelöschte Nachrichten entfernen verknüpfte Memories, editierte Nachrichten lösen automatische Neu-Extraktion aus. Keine Geister-Memories mehr.
+- **Themen-Tracking**: Extrahiert automatisch die aktuellen Gesprächsthemen aus den letzten 6 Nachrichten und nutzt sie als zusätzliches Retrieval-Signal.
+- **Dynamic Injection Hints**: Der Proaktive-Memory-Hinweis ist jetzt kontextabhängig — berücksichtigt emotionalen Zustand, Flashbacks, Memory-Typen und Intensität.
+- **Debounced Search + Virtuelles Scrolling**: Suche reagiert nach 300ms Pause, Memory Browser zeigt initial 50 Memories mit "Mehr laden"-Button.
+
 ### v1.10.0
 - **Memory Browser als Popup-Modal**: "Show Memories" öffnet jetzt ein vollwertiges Popup-Fenster (860px breit, 90vh hoch, scrollbar) statt im Debug-Panel zu rendern. Viel mehr Platz zum Lesen, Suchen und Bearbeiten.
 - **ESC / Click-auf-Overlay / ✕-Button**: Drei Wege das Modal zu schließen.

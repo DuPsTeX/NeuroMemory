@@ -1,6 +1,6 @@
 import{loadStore,saveStore,createEmpty}from'./store.js';
 import{extractMemories,integrateMemories}from'./extraction.js';
-import{retrieveMemories,formatMemoryContext,reinforceMemories}from'./retrieval.js';
+import{retrieveMemories,formatMemoryContext,reinforceMemories,selectiveReinforce,extractConversationThemes,buildDynamicHint}from'./retrieval.js';
 import{updateMemoryConnections}from'./network.js';
 import{runConsolidation}from'./consolidation.js';
 import{now}from'./utils.js';
@@ -83,9 +83,14 @@ console.log(`[NM] Consolidation: ${r.forgotten} forgotten, ${r.merged} merged, $
 }
 
 // Vor Generation: relevante Memories abrufen
-retrieveForMessage(message){
-if(!this.settings.enabled||!this.store)return'';
-const results=retrieveMemories(this.store,message,{
+retrieveForMessage(message,chatMessages){
+if(!this.settings.enabled||!this.store)return{context:'',hint:''};
+
+// Themen aus letzten Nachrichten extrahieren fuer besseres Retrieval
+const themes=chatMessages?extractConversationThemes(chatMessages):[];
+const queryWithThemes=themes.length?message+' '+themes.join(' '):message;
+
+const results=retrieveMemories(this.store,queryWithThemes,{
 topK:this.settings.topK,
 maxHops:this.settings.activationHops,
 decayPerHop:0.5,
@@ -96,20 +101,31 @@ emotionFactor:this.settings.emotionFactor,
 
 // Gepinnte Memories immer einschliessen (falls nicht bereits im Ergebnis)
 const resultIds=new Set(results.map(r=>r.memory.id));
-const t=now();
 for(const m of Object.values(this.store.memories)){
 if(m.pinned&&!resultIds.has(m.id)){
 results.push({memory:m,score:1.0,activation:1.0,retrievability:m.retrievability});
 }
 }
 
-if(!results.length)return'';
+if(!results.length)return{context:'',hint:''};
 
-// Reinforcement
+// Leichtes Reinforcement (accessCount+lastAccessed), volles Reinforcement kommt nach KI-Antwort
 reinforceMemories(results);
 this.lastInjected=results;
 
-return formatMemoryContext(results,this.settings.maxContextTokens,this.store);
+const context=formatMemoryContext(results,this.settings.maxContextTokens,this.store);
+const hint=this.settings.proactivePrompt?buildDynamicHint(results,this.store):'';
+if(themes.length)console.log('[NM] conversation themes:',themes.join(', '));
+return{context,hint};
+}
+
+// Selective Reinforcement nach KI-Antwort
+applySelectiveReinforcement(responseText){
+if(!this.lastInjected.length||!responseText)return;
+selectiveReinforce(this.lastInjected,responseText);
+const used=this.lastInjected.filter(r=>r._used).length;
+const total=this.lastInjected.length;
+console.log(`[NM] selective reinforcement: ${used}/${total} memories were used by AI`);
 }
 
 // Statistiken
