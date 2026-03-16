@@ -624,23 +624,30 @@ return html;
 }
 
 function showMemoryBrowser(){
-if(!core.store){showDebug('No character loaded');return}
-const debugEl=document.getElementById('nm_debugOutput');
-if(!debugEl)return;
-debugEl.innerHTML=`<div class="nm-browser-panel">${renderMemoryBrowser()}</div>`;
-const panel=debugEl.querySelector('.nm-browser-panel');
-
-// Suche
-const searchEl=panel.querySelector('#nm_memSearch');
-if(searchEl){
-searchEl.addEventListener('input',()=>{
-_browserFilter.search=searchEl.value;
+if(!core.store){setStatus('Kein Charakter geladen',true);return}
+document.getElementById('nm_modal_overlay')?.remove();
+const overlay=document.createElement('div');
+overlay.id='nm_modal_overlay';
+overlay.className='nm-modal-overlay';
+const dialog=document.createElement('div');
+dialog.className='nm-modal-dialog';
+const header=document.createElement('div');
+header.className='nm-modal-header';
+header.innerHTML=`<span class="nm-modal-title">🧠 Memory Browser</span><button class="nm-modal-close" id="nm_modal_close" title="Schließen">✕</button>`;
+const panel=document.createElement('div');
+panel.className='nm-browser-panel';
 panel.innerHTML=renderMemoryBrowser();
-attachBrowserEvents(panel);
+dialog.appendChild(header);
+dialog.appendChild(panel);
+overlay.appendChild(dialog);
+document.body.appendChild(overlay);
+document.getElementById('nm_modal_close').addEventListener('click',()=>overlay.remove());
+overlay.addEventListener('click',e=>{if(e.target===overlay)overlay.remove()});
+document.addEventListener('keydown',function onEsc(e){
+if(e.key==='Escape'){overlay.remove();document.removeEventListener('keydown',onEsc)}
 });
-}
-
 attachBrowserEvents(panel);
+panel.querySelector('#nm_memSearch')?.focus();
 }
 
 function attachBrowserEvents(panel){

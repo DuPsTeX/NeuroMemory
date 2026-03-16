@@ -147,6 +147,11 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.10.0
+- **Memory Browser als Popup-Modal**: "Show Memories" öffnet jetzt ein vollwertiges Popup-Fenster (860px breit, 90vh hoch, scrollbar) statt im Debug-Panel zu rendern. Viel mehr Platz zum Lesen, Suchen und Bearbeiten.
+- **ESC / Click-auf-Overlay / ✕-Button**: Drei Wege das Modal zu schließen.
+- Suchfeld erhält automatisch Fokus beim Öffnen.
+
 ### v1.9.0
 - **Lorebook Integration**: Aktive Lorebooks (World Info) direkt als Memories importieren — ein Klick importiert alle aktivierten Einträge als semantische Memories. Weltwissen, Charaktere, Städte, Fraktionen sind sofort im Memory-System verfügbar.
 - **📚 Lorebook-Badge**: Memories aus Lorebooks zeigen ein `📚`-Badge mit dem Lorebook-Namen als Tooltip im Memory Browser.
