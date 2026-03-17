@@ -25,6 +25,33 @@ Rules:
 - Maximum 8 memories. Be concise, no fluff.
 - Respond ONLY with a valid JSON array, no markdown, no explanation`;
 
+const LOREBOOK_EXTRACT_SYSTEM=`You are a memory extraction system for world-building lore entries. Analyze the following lorebook entries and extract properly categorized memories as a JSON array.
+
+Each memory object must have:
+- "content": string (concise fact, 1-2 sentences max)
+- "type": "semantic"|"relational"|"episodic"|"emotional"
+  - semantic: facts, descriptions, abilities, locations, items, rules
+  - relational: relationships between characters, factions, alliances
+  - episodic: historical events, battles, past incidents
+  - emotional: emotionally charged lore (traumas, oaths, deep bonds)
+- "subtype": null|"appearance"|"plot" (optional)
+  - "appearance": physical descriptions of characters (hair, eyes, clothing, scars, body type) — use type "semantic"
+  - "plot": key story/historical events with time context — use type "episodic"
+  - null: for everything else
+- "entities": string[] (named characters, places, objects, factions)
+- "keywords": string[] (3-8 important lowercase keywords)
+- "emotionalValence": number (-1.0 to 1.0, usually 0 for lore facts)
+- "emotionalIntensity": number (0.0 to 1.0)
+- "importance": number (0.5-1.0, lore is usually important)
+
+Rules:
+- One lorebook entry may produce MULTIPLE memories if it contains different types of information
+- ALWAYS extract appearance as separate memories with subtype "appearance"
+- ALWAYS extract historical events as episodic with subtype "plot" where applicable
+- Extract relationships between characters/factions as "relational"
+- Maximum 3 memories per lorebook entry, be concise
+- Respond ONLY with a valid JSON array, no markdown, no explanation`;
+
 // WICHTIG: getContext() gibt jedes Mal ein neues Snapshot-Objekt zurueck - NIE cachen!
 function getCtx(){
 if(typeof SillyTavern!=='undefined'&&SillyTavern.getContext)return SillyTavern.getContext();
@@ -365,8 +392,8 @@ return`
 </div>
 
 <div id="nm_lorebookImportRow" style="display:none;margin:4px 0;padding:4px 0">
-<button id="nm_importLorebook" class="menu_button nm-import-card-btn">📚 Aus aktivem Lorebook importieren</button>
-<span style="font-size:.75em;opacity:.6;display:block;margin-top:2px">Alle aktiven Lorebook-Einträge als Memories importieren (Re-Import ersetzt vorhandene)</span>
+<button id="nm_importLorebook" class="menu_button nm-import-card-btn">🧠 Smart-Import aus Lorebook</button>
+<span style="font-size:.75em;opacity:.6;display:block;margin-top:2px">KI analysiert Lorebook-Einträge und kategorisiert sie korrekt (Aussehen, Story, Beziehungen, Fakten)</span>
 </div>
 
 <div class="inline-drawer nm-textimport-drawer">
@@ -939,6 +966,7 @@ setStatus('Import Error: '+e.message,true);
 
 async function doImportFromLorebook(){
 if(!core.store||!core.charId){setStatus('Kein Charakter geladen',true);return}
+if(!core._generateFn){setStatus('Kein AI-Modell konfiguriert — KI wird fuer Smart-Import benoetigt',true);return}
 let selected_world_info,wiLoadFn;
 try{
 const wi=await import('/scripts/world-info.js');
@@ -954,8 +982,9 @@ if(!selected_world_info?.length){
 setStatus('Kein Lorebook aktiv. Bitte im Chat ein Lorebook auswählen.',true);
 return;
 }
-setStatus('Importiere aus Lorebook...');
+setStatus('Smart-Import aus Lorebook (KI-Analyse)...');
 let totalMems=0;
+let totalBatches=0;
 for(const bookName of selected_world_info){
 // Bestehende Lorebook-Memories fuer dieses Buch entfernen (sauberer Re-Import)
 for(const[id,m]of Object.entries(core.store.memories)){
@@ -966,29 +995,63 @@ try{data=await wiLoadFn(bookName);}
 catch(e){console.warn('[NM] loadWorldInfo failed for',bookName,e);continue}
 if(!data?.entries)continue;
 const entries=Object.values(data.entries).filter(e=>!e.disable&&e.content?.trim().length>5);
+if(!entries.length)continue;
+
+// Batch-Verarbeitung: 6 Lorebook-Eintraege pro API-Call
+const BATCH_SIZE=6;
+const batches=[];
+for(let i=0;i<entries.length;i+=BATCH_SIZE){
+batches.push(entries.slice(i,i+BATCH_SIZE));
+}
+totalBatches+=batches.length;
+console.log(`[NM] lorebook "${bookName}": ${entries.length} entries → ${batches.length} batches`);
+
+const origPrompt=getExtractionPrompt();
+setExtractionPrompt(LOREBOOK_EXTRACT_SYSTEM);
+
+for(let bi=0;bi<batches.length;bi++){
+const batch=batches[bi];
+setStatus(`📚 ${bookName}: Batch ${bi+1}/${batches.length} (${totalMems} Memories bisher)...`);
+
+// Lorebook-Eintraege als "fake chat" formatieren damit extractMemories sie verarbeiten kann
+const batchText=batch.map(e=>{
+const title=e.comment||e.key?.[0]||'Entry';
+return`[${title}]\n${e.content}`;
+}).join('\n\n---\n\n');
+
+const fakeChat=[{is_user:false,name:'Lorebook',mes:batchText}];
+try{
+const mems=await extractMemories(core._generateFn,fakeChat,core.charId,1);
+if(mems.length){
+// Lorebook-Metadata auf jede Memory setzen
 const t=Date.now();
-const mems=entries.map(e=>({
-id:uid(),characterId:core.charId,type:'semantic',
-content:((e.comment?e.comment+': ':'')+e.content).slice(0,300),
-entities:(e.key||[]).slice(0,5),
-keywords:(e.key||[]).map(k=>k.toLowerCase()).slice(0,10),
-importance:e.constant?1.0:0.7,
-emotionalValence:0,emotionalIntensity:0,
-stability:3.0,retrievability:1.0,accessCount:0,
-createdAt:t,lastAccessedAt:t,lastReinforcedAt:t,
-sourceMessageIds:[],connections:[],
-pinned:!!e.constant,userCreated:false,
-lorebookSource:bookName,
-}));
+for(const m of mems){
+m.lorebookSource=bookName;
+m.stability=3.0;// Hohe Stabilitaet fuer Weltwissen
+m.createdAt=t;
+m.lastAccessedAt=t;
+m.lastReinforcedAt=t;
+}
+// Constant-Eintraege: wenn der Batch nur constant-Entries hat, Memories pinnen
+const allConstant=batch.every(e=>e.constant);
+if(allConstant)for(const m of mems)m.pinned=true;
 integrateMemories(core.store,mems);
 totalMems+=mems.length;
-console.log('[NM] lorebook import:',bookName,'-',mems.length,'memories');
+console.log(`[NM] lorebook batch ${bi+1}: extracted ${mems.length} memories`);
+for(const m of mems)console.log(`[NM]   -> [${m.type}${m.subtype?'/'+m.subtype:''}] ${m.content.substring(0,60)}`);
 }
-if(!totalMems){setStatus('Keine aktivierten Einträge gefunden',true);return}
+}catch(e){
+console.error(`[NM] lorebook batch ${bi+1} error:`,e);
+}
+}
+setExtractionPrompt(origPrompt);
+console.log(`[NM] lorebook import done: ${bookName} → ${totalMems} memories total`);
+}
+if(!totalMems){setStatus('Keine Memories extrahiert — prüfe Browser-Konsole',true);return}
 updateMemoryConnections(core.store);
 await saveStore(core.store);
 updateUI();
-setStatus(`✓ ${totalMems} Memories aus ${selected_world_info.length} Lorebook(s) importiert`);
+setStatus(`✓ ${totalMems} Memories aus ${selected_world_info.length} Lorebook(s) smart-importiert (${totalBatches} KI-Calls)`);
 const panel=document.querySelector('.nm-browser-panel');
 if(panel){panel.innerHTML=renderMemoryBrowser();attachBrowserEvents(panel);}
 }

@@ -147,6 +147,12 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 
 ## Changelog
 
+### v1.13.0
+- **Smart Lorebook Import**: Lorebook-Einträge werden jetzt per KI analysiert statt blind als `semantic` gespeichert. Die KI erkennt automatisch Appearance-Beschreibungen, Beziehungen, historische Ereignisse und Story-Events und weist korrekte `type`/`subtype`-Werte zu.
+- **Batch-Verarbeitung**: Lorebook-Einträge werden in Gruppen von 6 gebündelt — bei 30 Einträgen nur 5 API-Calls statt 30. Fortschrittsanzeige im Status.
+- **Spezialisierter Lorebook-Prompt**: Eigener `LOREBOOK_EXTRACT_SYSTEM`-Prompt der auf Weltwissen-Kategorisierung optimiert ist (Fraktionen, Orte, Fähigkeiten, Appearance, Beziehungen).
+- **Multi-Memory pro Eintrag**: Ein einzelner Lorebook-Eintrag kann jetzt in mehrere Memories aufgespalten werden (z.B. Appearance + Persönlichkeit + Beziehung aus einer Charakterbeschreibung).
+
 ### v1.12.0
 - **Appearance-Tracking**: Neuer Subtype `appearance` auf `semantic`-Memories — physische Beschreibungen (Haare, Augen, Kleidung, Narben) werden automatisch extrahiert und als eigener `[Character Appearance]`-Block vor den emotionalen Memories injiziert. Die KI kennt jetzt immer das Aussehen der Charaktere.
 - **Story-Tracking**: Neuer Subtype `plot` auf `episodic`-Memories — wichtige Handlungsereignisse mit Zeit/Tag-Kontext werden als `[Story So Far]`-Block chronologisch sortiert injiziert. Die KI behält den roten Faden der Geschichte.
