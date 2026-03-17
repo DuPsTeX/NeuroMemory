@@ -895,8 +895,8 @@ const origPrompt=getExtractionPrompt();
 setExtractionPrompt(CARD_EXTRACT_SYSTEM);
 let mems=[];
 try{
-const fakeChat=[{is_user:false,name:char.name,mes:cardText}];
-mems=await extractMemories(core._generateFn,fakeChat,core.charId,1);
+const fakeChat=[{is_user:true,name:'System',mes:'Analyze this character description:'},{is_user:false,name:char.name,mes:cardText}];
+mems=await extractMemories(core._generateFn,fakeChat,core.charId,2);
 }catch(e){
 console.error('[NM] card import error',e);
 setStatus('Import Error: '+e.message,true);
@@ -945,9 +945,9 @@ if(!text){setStatus('Bitte Text eingeben',true);return}
 if(!core.store||!core.charId){setStatus('Kein Charakter geladen',true);return}
 if(!core._generateFn){setStatus('Kein AI-Modell konfiguriert',true);return}
 setStatus('Importiere aus Text...');
-const fakeChat=[{is_user:false,name:core.charName||'Character',mes:text}];
+const fakeChat=[{is_user:true,name:'System',mes:'Analyze this text:'},{is_user:false,name:core.charName||'Character',mes:text}];
 try{
-const mems=await extractMemories(core._generateFn,fakeChat,core.charId,1);
+const mems=await extractMemories(core._generateFn,fakeChat,core.charId,2);
 if(!mems.length){setStatus('Keine Memories extrahiert — prüfe Browser-Konsole',true);return}
 integrateMemories(core.store,mems);
 updateMemoryConnections(core.store);
@@ -965,13 +965,16 @@ setStatus('Import Error: '+e.message,true);
 }
 
 async function doImportFromLorebook(){
-if(!core.store||!core.charId){setStatus('Kein Charakter geladen',true);return}
-if(!core._generateFn){setStatus('Kein AI-Modell konfiguriert — KI wird fuer Smart-Import benoetigt',true);return}
+console.log('[NM] doImportFromLorebook called');
+if(!core.store||!core.charId){setStatus('Kein Charakter geladen',true);console.log('[NM] lorebook: no store/charId');return}
+if(!core._generateFn){setStatus('Kein AI-Modell konfiguriert — KI wird fuer Smart-Import benoetigt',true);console.log('[NM] lorebook: no generateFn');return}
 let selected_world_info,wiLoadFn;
 try{
+console.log('[NM] lorebook: importing world-info.js...');
 const wi=await import('/scripts/world-info.js');
 selected_world_info=wi.selected_world_info;
 wiLoadFn=wi.loadWorldInfo;
+console.log('[NM] lorebook: world-info imported, selected:',selected_world_info);
 }catch(e){
 console.warn('[NM] world-info.js import failed, trying context fallback',e);
 const c=getCtx();
@@ -980,6 +983,7 @@ selected_world_info=[];
 }
 if(!selected_world_info?.length){
 setStatus('Kein Lorebook aktiv. Bitte im Chat ein Lorebook auswählen.',true);
+console.log('[NM] lorebook: no active lorebooks found');
 return;
 }
 setStatus('Smart-Import aus Lorebook (KI-Analyse)...');
@@ -1019,9 +1023,9 @@ const title=e.comment||e.key?.[0]||'Entry';
 return`[${title}]\n${e.content}`;
 }).join('\n\n---\n\n');
 
-const fakeChat=[{is_user:false,name:'Lorebook',mes:batchText}];
+const fakeChat=[{is_user:true,name:'System',mes:'Analyze the following lorebook entries:'},{is_user:false,name:'Lorebook',mes:batchText}];
 try{
-const mems=await extractMemories(core._generateFn,fakeChat,core.charId,1);
+const mems=await extractMemories(core._generateFn,fakeChat,core.charId,2);
 if(mems.length){
 // Lorebook-Metadata auf jede Memory setzen
 const t=Date.now();
