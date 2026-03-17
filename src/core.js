@@ -143,6 +143,7 @@ emotional:mems.filter(m=>m.type==='emotional').length,
 relational:mems.filter(m=>m.type==='relational').length,
 },
 bySubtype:{
+person:mems.filter(m=>m.subtype==='person').length,
 appearance:mems.filter(m=>m.subtype==='appearance').length,
 plot:mems.filter(m=>m.subtype==='plot').length,
 },

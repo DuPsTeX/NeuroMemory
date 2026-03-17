@@ -156,13 +156,15 @@ if(!results.length)return'';
 const surprise=results.find(r=>r.isSurprise);
 const mainResults=results.filter(r=>!r.isSurprise);
 
-// Subtype-Tiers: Appearance + Plot separat sammeln
+// Subtype-Tiers: Person + Appearance + Plot separat sammeln
+const person=mainResults.filter(r=>r.memory.subtype==='person');
+const persIds=new Set(person.map(r=>r.memory.id));
 const appearance=mainResults.filter(r=>r.memory.subtype==='appearance');
 const appIds=new Set(appearance.map(r=>r.memory.id));
 const plot=mainResults.filter(r=>r.memory.subtype==='plot')
 .sort((a,b)=>a.memory.createdAt-b.memory.createdAt);// chronologisch
 const plotIds=new Set(plot.map(r=>r.memory.id));
-const excludeIds=new Set([...appIds,...plotIds]);
+const excludeIds=new Set([...persIds,...appIds,...plotIds]);
 
 // In Tiers aufteilen (ohne appearance/plot)
 const defining=mainResults
@@ -196,6 +198,16 @@ if(!add(`[Character Essence]\n${store.digest.text}\n\n`))return out;
 if(appearance.length){
 if(!add('[Character Appearance]\n'))return out;
 for(const r of appearance){
+const m=r.memory;
+if(!add(`• ${m.content}\n`))break;
+}
+if(!add('\n'))return out;
+}
+
+// Block 1c: Character Profiles (subtype=person)
+if(person.length){
+if(!add('[Character Profiles]\n'))return out;
+for(const r of person){
 const m=r.memory;
 if(!add(`• ${m.content}\n`))break;
 }
@@ -332,9 +344,11 @@ const surprise=results.find(r=>r.isSurprise);
 if(surprise){
 parts.push(`An unexpected memory just surfaced — let it subtly color the response`);
 }
-// Appearance + Plot Hinweise
+// Person + Appearance + Plot Hinweise
+const hasPerson=results.some(r=>r.memory.subtype==='person');
 const hasAppearance=results.some(r=>r.memory.subtype==='appearance');
 const hasPlot=results.some(r=>r.memory.subtype==='plot');
+if(hasPerson)parts.push(`Character profiles are loaded — reference roles, stats and abilities when relevant`);
 if(hasAppearance)parts.push(`Character appearance details are available — use them for vivid physical descriptions`);
 if(hasPlot)parts.push(`Key story events are loaded — maintain continuity with established timeline`);
 // Dominante Memory-Typen

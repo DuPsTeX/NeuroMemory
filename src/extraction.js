@@ -12,9 +12,10 @@ Each memory object must have:
   - semantic: general facts/preferences ("Alice prefers tea over coffee")
   - emotional: emotionally significant moments ("Bob was deeply hurt by the betrayal")
   - relational: relationship dynamics ("Alice and Bob became close friends")
-- "subtype": null|"appearance"|"plot" (optional, use when applicable)
+- "subtype": null|"appearance"|"plot"|"person" (optional, use when applicable)
   - "appearance": physical description of a character (hair, eyes, clothing, scars, etc.) — ALWAYS use type "semantic" with subtype "appearance"
   - "plot": key story event with time/day context — ALWAYS use type "episodic" with subtype "plot". Include day/time in content if mentioned.
+  - "person": character profile (name, role/position, appearance summary, and if known: level, HP, MP, abilities/skills) — ALWAYS use type "semantic" with subtype "person"
   - null: for all other memories
 - "entities": string[] (named characters, places, objects mentioned)
 - "keywords": string[] (3-8 important lowercase keywords)
@@ -28,6 +29,7 @@ Rules:
 - Be concise, no fluff
 - Keywords should be lowercase, single words
 - ALWAYS extract appearance details when characters are physically described
+- ALWAYS extract character profiles as subtype "person" when a character is introduced with name, role/position, or stats (level, HP, MP, abilities)
 - ALWAYS extract plot events with time references when story progression occurs
 - Respond ONLY with a valid JSON array, no markdown, no explanation`;
 
@@ -130,7 +132,7 @@ const mem={
 id:uid(),
 characterId:charId,
 type:['episodic','semantic','emotional','relational'].includes(item.type)?item.type:'semantic',
-subtype:['appearance','plot'].includes(item.subtype)?item.subtype:null,
+subtype:['appearance','plot','person'].includes(item.subtype)?item.subtype:null,
 content:item.content.slice(0,300),
 entities:Array.isArray(item.entities)?item.entities.map(String).slice(0,10):[],
 keywords:Array.isArray(item.keywords)?item.keywords.map(s=>String(s).toLowerCase()).slice(0,8):[],

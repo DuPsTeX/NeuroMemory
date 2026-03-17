@@ -12,7 +12,9 @@ const CARD_EXTRACT_SYSTEM=`You are a memory extraction system for character back
 Each memory object must have:
 - "content": string (concise fact, 1-2 sentences max)
 - "type": "semantic"|"relational" (NO episodic — nothing happened yet in the story)
-- "subtype": null|"appearance" (use "appearance" for physical descriptions: hair, eyes, clothing, scars, body type, etc.)
+- "subtype": null|"appearance"|"person" (optional)
+  - "appearance": physical descriptions only (hair, eyes, clothing, scars, body type) — use type "semantic"
+  - "person": character profile (name, role/position, appearance summary, and if known: level, HP, MP, abilities/skills) — use type "semantic"
 - "entities": string[] (named characters, places, objects mentioned)
 - "keywords": string[] (3-8 important lowercase keywords)
 - "emotionalValence": number (-1.0 to 1.0, usually 0 for background facts)
@@ -21,6 +23,7 @@ Each memory object must have:
 
 Rules:
 - Extract personality traits, abilities, relationships, history, motivations
+- ALWAYS extract character profiles as subtype "person" when name, role/position, or stats are described
 - ALWAYS extract appearance as separate memories with subtype "appearance" — one per character if multiple are described
 - Maximum 8 memories. Be concise, no fluff.
 - Respond ONLY with a valid JSON array, no markdown, no explanation`;
@@ -34,9 +37,10 @@ Each memory object must have:
   - relational: relationships between characters, factions, alliances
   - episodic: historical events, battles, past incidents
   - emotional: emotionally charged lore (traumas, oaths, deep bonds)
-- "subtype": null|"appearance"|"plot" (optional)
+- "subtype": null|"appearance"|"plot"|"person" (optional)
   - "appearance": physical descriptions of characters (hair, eyes, clothing, scars, body type) — use type "semantic"
   - "plot": key story/historical events with time context — use type "episodic"
+  - "person": character profile (name, role/position, appearance summary, and if known: level, HP, MP, abilities/skills) — use type "semantic"
   - null: for everything else
 - "entities": string[] (named characters, places, objects, factions)
 - "keywords": string[] (3-8 important lowercase keywords)
@@ -47,6 +51,7 @@ Each memory object must have:
 Rules:
 - One lorebook entry may produce MULTIPLE memories if it contains different types of information
 - ALWAYS extract appearance as separate memories with subtype "appearance"
+- ALWAYS extract character profiles as subtype "person" when name, role/position, or stats are described
 - ALWAYS extract historical events as episodic with subtype "plot" where applicable
 - Extract relationships between characters/factions as "relational"
 - Maximum 3 memories per lorebook entry, be concise
@@ -423,7 +428,8 @@ return`
 <option value="episodic">Episodic (Ereignis)</option>
 <option value="emotional">Emotional (Gefühl)</option>
 <option value="relational">Relational (Beziehung)</option>
-<option value="semantic:appearance">👤 Aussehen (Erscheinungsbild)</option>
+<option value="semantic:person">🧑 Person (Charakter-Profil)</option>
+<option value="semantic:appearance">👁 Aussehen (Erscheinungsbild)</option>
 <option value="episodic:plot">📖 Story (Handlungsereignis)</option>
 </select>
 <label class="nm-add-imp-label">Wichtigkeit:
@@ -536,7 +542,7 @@ const s=core.getStats();
 if(!s){statsEl.innerHTML='<i>No character loaded</i>';return}
 statsEl.innerHTML=`
 <div class="nm-stat-row"><b>Memories:</b> ${s.totalMemories} | <b>Entities:</b> ${s.totalEntities}</div>
-<div class="nm-stat-row"><b>Types:</b> E:${s.byType.episodic} S:${s.byType.semantic} Em:${s.byType.emotional} R:${s.byType.relational} 👤:${s.bySubtype?.appearance||0} 📖:${s.bySubtype?.plot||0}</div>
+<div class="nm-stat-row"><b>Types:</b> E:${s.byType.episodic} S:${s.byType.semantic} Em:${s.byType.emotional} R:${s.byType.relational} 🧑:${s.bySubtype?.person||0} 👁:${s.bySubtype?.appearance||0} 📖:${s.bySubtype?.plot||0}</div>
 <div class="nm-stat-row"><b>Avg Importance:</b> ${s.avgImportance.toFixed(2)} | <b>Avg Retrievability:</b> ${s.avgRetrievability.toFixed(2)}</div>
 <div class="nm-stat-row"><b>Last injected:</b> ${s.lastInjectedCount} memories</div>`;
 const mood=core.store?getMoodSummary(core.store):null;
@@ -598,6 +604,7 @@ if(filter.type==='pinned')mems=mems.filter(m=>m.pinned);
 else if(filter.type==='user')mems=mems.filter(m=>m.userCreated);
 else if(filter.type==='appearance')mems=mems.filter(m=>m.subtype==='appearance');
 else if(filter.type==='plot')mems=mems.filter(m=>m.subtype==='plot');
+else if(filter.type==='person')mems=mems.filter(m=>m.subtype==='person');
 else if(filter.type!=='all')mems=mems.filter(m=>m.type===filter.type);
 if(filter.search){
 const q=filter.search.toLowerCase();
@@ -607,8 +614,8 @@ const ents=Object.values(core.store.entities).sort((a,b)=>b.mentionCount-a.menti
 const total=Object.keys(core.store.memories).length;
 
 // Filter-Controls
-const types=['all','episodic','semantic','emotional','relational','appearance','plot','pinned','user'];
-const typeLabels={all:'Alle',episodic:'Episodic',semantic:'Semantic',emotional:'Emotional',relational:'Relational',appearance:'👤 Aussehen',plot:'📖 Story',pinned:'📌 Pinned',user:'✋ Manuell'};
+const types=['all','episodic','semantic','emotional','relational','person','appearance','plot','pinned','user'];
+const typeLabels={all:'Alle',episodic:'Episodic',semantic:'Semantic',emotional:'Emotional',relational:'Relational',person:'🧑 Person',appearance:'👁 Aussehen',plot:'📖 Story',pinned:'📌 Pinned',user:'✋ Manuell'};
 let filterBtns=types.map(t=>`<button class="nm-filter-btn${filter.type===t?' active':''}" data-action="filter" data-type="${t}">${typeLabels[t]}</button>`).join('');
 
 // Digest-Block
@@ -645,7 +652,7 @@ const bgColor=(m.emotionalValence||0)>0.2?`rgba(76,175,80,${bgAlpha})`:(m.emotio
 const intBadge=(m.emotionalIntensity||0)>=0.85?'<span class="nm-int-badge" title="Sehr intensive Erinnerung">⚡⚡</span>':(m.emotionalIntensity||0)>=0.6?'<span class="nm-int-badge" title="Intensive Erinnerung">⚡</span>':'';
 html+=`<div class="nm-mem-item nm-type-${m.type}${m.pinned?' nm-pinned':''}" data-memid="${escHtml(m.id)}" style="border-left-width:${bw}px;background-color:${bgColor}">
 <div class="nm-mem-header">
-<span class="nm-badge">${m.type}</span>${m.subtype?`<span class="nm-subtype-badge nm-sub-${m.subtype}">${m.subtype==='appearance'?'👤':'📖'} ${m.subtype}</span>`:''}${intBadge}${lbBadge}${userBadge}
+<span class="nm-badge">${m.type}</span>${m.subtype?`<span class="nm-subtype-badge nm-sub-${m.subtype}">${{person:'🧑',appearance:'👁',plot:'📖'}[m.subtype]||''} ${m.subtype}</span>`:''}${intBadge}${lbBadge}${userBadge}
 <span class="nm-imp">imp:${m.importance.toFixed(2)}</span>
 <span class="nm-ret">ret:${m.retrievability.toFixed(2)}</span>
 <span class="nm-age">${age}d</span>
