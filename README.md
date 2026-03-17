@@ -9,7 +9,7 @@ A persistent, AI-powered long-term memory system for SillyTavern. NeuroMemory au
 ## Features
 
 - **Automatic Memory Extraction** — After each AI response, NeuroMemory silently analyzes the last few messages and extracts meaningful memories using your configured AI model.
-- **4 Memory Types** — Episodic (events), Semantic (facts/knowledge), Emotional (feelings/bonds), and Relational (character dynamics).
+- **4 Memory Types + 2 Subtypes** — Episodic (events), Semantic (facts/knowledge), Emotional (feelings/bonds), Relational (character dynamics), plus specialized subtypes: Appearance (physical descriptions) and Plot (key story events with timeline).
 - **Associative Memory Network** — Memories are interconnected via a graph of entities and keywords, enabling spreading-activation retrieval (like the human brain).
 - **Memory Decay** — Memories naturally fade over time (configurable half-life), with emotional memories decaying more slowly.
 - **Smart Retrieval** — Relevant memories are automatically injected into the context before each generation based on semantic similarity, entity matching, and memory strength.
@@ -146,6 +146,15 @@ Memories are stored per-character in the browser's IndexedDB using `localforage`
 ---
 
 ## Changelog
+
+### v1.12.0
+- **Appearance-Tracking**: Neuer Subtype `appearance` auf `semantic`-Memories — physische Beschreibungen (Haare, Augen, Kleidung, Narben) werden automatisch extrahiert und als eigener `[Character Appearance]`-Block vor den emotionalen Memories injiziert. Die KI kennt jetzt immer das Aussehen der Charaktere.
+- **Story-Tracking**: Neuer Subtype `plot` auf `episodic`-Memories — wichtige Handlungsereignisse mit Zeit/Tag-Kontext werden als `[Story So Far]`-Block chronologisch sortiert injiziert. Die KI behält den roten Faden der Geschichte.
+- **Subtype-Filter im Browser**: Neue Filter-Buttons "👤 Aussehen" und "📖 Story" im Memory Browser zum gezielten Durchsuchen.
+- **Subtype-Badges**: Appearance- und Plot-Memories zeigen farbige Badges im Browser und Last-Injected-View.
+- **Manuelle Erstellung**: Dropdown enthält jetzt "👤 Aussehen" und "📖 Story" als direkt wählbare Optionen.
+- **Card-Import**: Character-Card-Import extrahiert jetzt gezielt Appearance-Memories mit `subtype: "appearance"`.
+- **Dynamic Hints**: Injection-Hints informieren die KI wenn Appearance- oder Plot-Memories aktiv sind.
 
 ### v1.11.0
 - **Selective Reinforcement**: Memories werden nur noch verstärkt wenn die KI sie tatsächlich in ihrer Antwort aufgegriffen hat (Entity/Keyword-Matching gegen die AI-Response). Ignorierte Memories verlieren leicht an Stabilität — das Memory-System lernt automatisch was wirklich relevant ist.

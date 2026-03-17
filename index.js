@@ -12,6 +12,7 @@ const CARD_EXTRACT_SYSTEM=`You are a memory extraction system for character back
 Each memory object must have:
 - "content": string (concise fact, 1-2 sentences max)
 - "type": "semantic"|"relational" (NO episodic — nothing happened yet in the story)
+- "subtype": null|"appearance" (use "appearance" for physical descriptions: hair, eyes, clothing, scars, body type, etc.)
 - "entities": string[] (named characters, places, objects mentioned)
 - "keywords": string[] (3-8 important lowercase keywords)
 - "emotionalValence": number (-1.0 to 1.0, usually 0 for background facts)
@@ -19,7 +20,8 @@ Each memory object must have:
 - "importance": number (0.5-1.0, backstory facts are usually important)
 
 Rules:
-- Extract personality traits, abilities, relationships, history, motivations, appearance
+- Extract personality traits, abilities, relationships, history, motivations
+- ALWAYS extract appearance as separate memories with subtype "appearance" — one per character if multiple are described
 - Maximum 8 memories. Be concise, no fluff.
 - Respond ONLY with a valid JSON array, no markdown, no explanation`;
 
@@ -394,6 +396,8 @@ return`
 <option value="episodic">Episodic (Ereignis)</option>
 <option value="emotional">Emotional (Gefühl)</option>
 <option value="relational">Relational (Beziehung)</option>
+<option value="semantic:appearance">👤 Aussehen (Erscheinungsbild)</option>
+<option value="episodic:plot">📖 Story (Handlungsereignis)</option>
 </select>
 <label class="nm-add-imp-label">Wichtigkeit:
 <input type="range" id="nm_newMemImportance" min="0" max="1" step="0.1" value="0.8" class="nm-imp-range">
@@ -505,7 +509,7 @@ const s=core.getStats();
 if(!s){statsEl.innerHTML='<i>No character loaded</i>';return}
 statsEl.innerHTML=`
 <div class="nm-stat-row"><b>Memories:</b> ${s.totalMemories} | <b>Entities:</b> ${s.totalEntities}</div>
-<div class="nm-stat-row"><b>Types:</b> E:${s.byType.episodic} S:${s.byType.semantic} Em:${s.byType.emotional} R:${s.byType.relational}</div>
+<div class="nm-stat-row"><b>Types:</b> E:${s.byType.episodic} S:${s.byType.semantic} Em:${s.byType.emotional} R:${s.byType.relational} 👤:${s.bySubtype?.appearance||0} 📖:${s.bySubtype?.plot||0}</div>
 <div class="nm-stat-row"><b>Avg Importance:</b> ${s.avgImportance.toFixed(2)} | <b>Avg Retrievability:</b> ${s.avgRetrievability.toFixed(2)}</div>
 <div class="nm-stat-row"><b>Last injected:</b> ${s.lastInjectedCount} memories</div>`;
 const mood=core.store?getMoodSummary(core.store):null;
@@ -565,6 +569,8 @@ let mems=Object.values(core.store.memories).sort((a,b)=>b.createdAt-a.createdAt)
 // Filter anwenden
 if(filter.type==='pinned')mems=mems.filter(m=>m.pinned);
 else if(filter.type==='user')mems=mems.filter(m=>m.userCreated);
+else if(filter.type==='appearance')mems=mems.filter(m=>m.subtype==='appearance');
+else if(filter.type==='plot')mems=mems.filter(m=>m.subtype==='plot');
 else if(filter.type!=='all')mems=mems.filter(m=>m.type===filter.type);
 if(filter.search){
 const q=filter.search.toLowerCase();
@@ -574,8 +580,8 @@ const ents=Object.values(core.store.entities).sort((a,b)=>b.mentionCount-a.menti
 const total=Object.keys(core.store.memories).length;
 
 // Filter-Controls
-const types=['all','episodic','semantic','emotional','relational','pinned','user'];
-const typeLabels={all:'Alle',episodic:'Episodic',semantic:'Semantic',emotional:'Emotional',relational:'Relational',pinned:'📌 Pinned',user:'✋ Manuell'};
+const types=['all','episodic','semantic','emotional','relational','appearance','plot','pinned','user'];
+const typeLabels={all:'Alle',episodic:'Episodic',semantic:'Semantic',emotional:'Emotional',relational:'Relational',appearance:'👤 Aussehen',plot:'📖 Story',pinned:'📌 Pinned',user:'✋ Manuell'};
 let filterBtns=types.map(t=>`<button class="nm-filter-btn${filter.type===t?' active':''}" data-action="filter" data-type="${t}">${typeLabels[t]}</button>`).join('');
 
 // Digest-Block
@@ -612,7 +618,7 @@ const bgColor=(m.emotionalValence||0)>0.2?`rgba(76,175,80,${bgAlpha})`:(m.emotio
 const intBadge=(m.emotionalIntensity||0)>=0.85?'<span class="nm-int-badge" title="Sehr intensive Erinnerung">⚡⚡</span>':(m.emotionalIntensity||0)>=0.6?'<span class="nm-int-badge" title="Intensive Erinnerung">⚡</span>':'';
 html+=`<div class="nm-mem-item nm-type-${m.type}${m.pinned?' nm-pinned':''}" data-memid="${escHtml(m.id)}" style="border-left-width:${bw}px;background-color:${bgColor}">
 <div class="nm-mem-header">
-<span class="nm-badge">${m.type}</span>${intBadge}${lbBadge}${userBadge}
+<span class="nm-badge">${m.type}</span>${m.subtype?`<span class="nm-subtype-badge nm-sub-${m.subtype}">${m.subtype==='appearance'?'👤':'📖'} ${m.subtype}</span>`:''}${intBadge}${lbBadge}${userBadge}
 <span class="nm-imp">imp:${m.importance.toFixed(2)}</span>
 <span class="nm-ret">ret:${m.retrievability.toFixed(2)}</span>
 <span class="nm-age">${age}d</span>
@@ -772,7 +778,7 @@ if(!results.length){showDebug('No memories injected in last generation.');return
 let html='<h3>Last Injected ('+results.length+')</h3>';
 for(const r of results){
 html+=`<div class="nm-mem-item nm-type-${r.memory.type}">
-<div class="nm-mem-header"><span class="nm-badge">${r.memory.type}</span> score:${r.score.toFixed(3)} act:${r.activation.toFixed(3)} ret:${r.retrievability.toFixed(3)}</div>
+<div class="nm-mem-header"><span class="nm-badge">${r.memory.type}</span>${r.memory.subtype?`<span class="nm-subtype-badge nm-sub-${r.memory.subtype}">${r.memory.subtype}</span>`:''} score:${r.score.toFixed(3)} act:${r.activation.toFixed(3)} ret:${r.retrievability.toFixed(3)}</div>
 <div class="nm-mem-content">${escHtml(r.memory.content)}</div></div>`;
 }
 showPopup('Last Injected Memories',html);
@@ -783,7 +789,8 @@ const contentEl=document.getElementById('nm_newMemContent');
 const content=contentEl?contentEl.value.trim():'';
 if(!content){setStatus('Bitte Inhalt eingeben',true);return}
 if(!core.store||!core.charId){setStatus('Kein Charakter geladen',true);return}
-const type=document.getElementById('nm_newMemType')?.value||'semantic';
+const typeRaw=document.getElementById('nm_newMemType')?.value||'semantic';
+const[type,subtype]=typeRaw.includes(':')?typeRaw.split(':'):[typeRaw,null];
 const importance=parseFloat(document.getElementById('nm_newMemImportance')?.value||'0.8');
 const entitiesRaw=document.getElementById('nm_newMemEntities')?.value||'';
 const entities=entitiesRaw.split(',').map(s=>s.trim()).filter(Boolean);
@@ -793,6 +800,7 @@ const mem={
 id:uid(),
 characterId:core.charId,
 type,
+subtype:subtype||null,
 content,
 entities,
 keywords:extractKeywords(content),

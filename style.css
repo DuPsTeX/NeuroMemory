@@ -111,3 +111,8 @@
 .nm-modal-close{background:none;border:none;cursor:pointer;font-size:1.2em;opacity:.7;padding:2px 6px;border-radius:4px;color:var(--SmartThemeBodyColor)}
 .nm-modal-close:hover{opacity:1;background:var(--black20a)}
 .nm-browser-panel{padding:10px 14px;overflow-y:auto;flex:1;min-height:0}
+
+/* Subtype Badges */
+.nm-subtype-badge{padding:1px 5px;border-radius:3px;font-weight:600;font-size:.7em;text-transform:uppercase;margin-left:2px}
+.nm-sub-appearance{background:rgba(160,120,255,.2);color:#c0a0ff;border:1px solid rgba(160,120,255,.3)}
+.nm-sub-plot{background:rgba(100,200,255,.2);color:#80d0ff;border:1px solid rgba(100,200,255,.3)}

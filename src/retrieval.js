@@ -156,20 +156,28 @@ if(!results.length)return'';
 const surprise=results.find(r=>r.isSurprise);
 const mainResults=results.filter(r=>!r.isSurprise);
 
-// In Tiers aufteilen
+// Subtype-Tiers: Appearance + Plot separat sammeln
+const appearance=mainResults.filter(r=>r.memory.subtype==='appearance');
+const appIds=new Set(appearance.map(r=>r.memory.id));
+const plot=mainResults.filter(r=>r.memory.subtype==='plot')
+.sort((a,b)=>a.memory.createdAt-b.memory.createdAt);// chronologisch
+const plotIds=new Set(plot.map(r=>r.memory.id));
+const excludeIds=new Set([...appIds,...plotIds]);
+
+// In Tiers aufteilen (ohne appearance/plot)
 const defining=mainResults
-.filter(r=>(r.memory.emotionalIntensity||0)>=0.5)
+.filter(r=>(r.memory.emotionalIntensity||0)>=0.5&&!excludeIds.has(r.memory.id))
 .sort((a,b)=>(b.memory.emotionalIntensity||0)-(a.memory.emotionalIntensity||0))
 .slice(0,3);
 const defIds=new Set(defining.map(r=>r.memory.id));
 
 const recent=mainResults
-.filter(r=>r.memory.type==='episodic'&&!defIds.has(r.memory.id))
+.filter(r=>r.memory.type==='episodic'&&!defIds.has(r.memory.id)&&!excludeIds.has(r.memory.id))
 .sort((a,b)=>b.memory.createdAt-a.memory.createdAt)
 .slice(0,4);
 const recIds=new Set(recent.map(r=>r.memory.id));
 
-const background=mainResults.filter(r=>!defIds.has(r.memory.id)&&!recIds.has(r.memory.id));
+const background=mainResults.filter(r=>!defIds.has(r.memory.id)&&!recIds.has(r.memory.id)&&!excludeIds.has(r.memory.id));
 
 let out='';
 let approxTokens=0;
@@ -184,10 +192,29 @@ if(store?.digest?.text){
 if(!add(`[Character Essence]\n${store.digest.text}\n\n`))return out;
 }
 
+// Block 1b: Character Appearance (subtype=appearance)
+if(appearance.length){
+if(!add('[Character Appearance]\n'))return out;
+for(const r of appearance){
+const m=r.memory;
+if(!add(`• ${m.content}\n`))break;
+}
+if(!add('\n'))return out;
+}
+
 // Block 2: Aktueller emotionaler Zustand
 const emotState=computeEmotionalState(store);
 if(emotState){
 if(!add(`[${emotState}]\n\n`))return out;
+}
+
+// Block 2b: Story So Far (subtype=plot, chronologisch)
+if(plot.length){
+if(!add('[Story So Far]\n'))return out;
+for(const r of plot){
+if(!add(`• ${r.memory.content}\n`))break;
+}
+if(!add('\n'))return out;
 }
 
 // Block 3: Defining Memories (high emotional weight)
@@ -305,6 +332,11 @@ const surprise=results.find(r=>r.isSurprise);
 if(surprise){
 parts.push(`An unexpected memory just surfaced — let it subtly color the response`);
 }
+// Appearance + Plot Hinweise
+const hasAppearance=results.some(r=>r.memory.subtype==='appearance');
+const hasPlot=results.some(r=>r.memory.subtype==='plot');
+if(hasAppearance)parts.push(`Character appearance details are available — use them for vivid physical descriptions`);
+if(hasPlot)parts.push(`Key story events are loaded — maintain continuity with established timeline`);
 // Dominante Memory-Typen
 const types=results.map(r=>r.memory.type);
 const hasEmotional=types.includes('emotional');
