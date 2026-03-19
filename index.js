@@ -3,6 +3,7 @@ import{exportStore,importStore,loadStore,deleteStore,setContextGetter,saveStore,
 import{extractMemories,integrateEntityUpdates,parseEntityUpdates,setExtractionPrompt,getExtractionPrompt,DEFAULT_EXTRACT_SYSTEM}from'./src/extraction.js';
 import{uid,extractKeywords}from'./src/utils.js';
 import{updateEntityConnections}from'./src/network.js';
+import{formatEntityContext}from'./src/retrieval.js';
 import{ENTITY_SCHEMAS,ENTITY_TYPE_ICONS,createEntityNode,initSlots,createSlotEntry}from'./src/entities.js';
 
 const MODULE_NAME='neuro-memory';
@@ -847,13 +848,24 @@ return;
 function showLastInjected(){
 const results=core.getLastInjected();
 if(!results.length){showDebug('Keine Entities injiziert.');return}
+
+// Exakten injizierten Text generieren (wie er an die KI geht)
+const exactText=formatEntityContext(results,core.settings.maxContextTokens,core.store);
+
 let html='<h3>Last Injected ('+results.length+' Entities)</h3>';
+
+// Entity-Liste mit Scores
 for(const r of results){
 const ent=r.entity;
 const icon=ENTITY_TYPE_ICONS[ent.type]||'';
 html+=`<div class="nm-entity-item nm-entity-type-${ent.type}">
 <div class="nm-entity-header"><span>${icon} ${escHtml(ent.name)}</span> score:${r.score.toFixed(3)} act:${r.activation.toFixed(3)}${r.isSurprise?' ⚡SURPRISE':''}</div></div>`;
 }
+
+// Exakter injizierter Text
+html+=`<h3>Exakter Injection-Text (${exactText.length} chars, ~${Math.ceil(exactText.length/4)} tokens)</h3>`;
+html+=`<pre class="nm-injection-preview">${escHtml(exactText)}</pre>`;
+
 showPopup('Last Injected Entities',html);
 }
 

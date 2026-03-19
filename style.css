@@ -121,3 +121,6 @@
 
 /* Pin Badge in Header */
 .nm-pin-badge{font-size:.8em}
+
+/* Injection Preview */
+.nm-injection-preview{font-family:monospace;font-size:.78em;line-height:1.5;padding:10px;background:var(--black30a);border:1px solid var(--SmartThemeBorderColor);border-radius:4px;white-space:pre-wrap;word-break:break-word;max-height:400px;overflow-y:auto;color:var(--SmartThemeBodyColor)}
