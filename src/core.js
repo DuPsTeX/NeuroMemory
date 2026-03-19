@@ -27,6 +27,12 @@ this.charId=charId;
 this.charName=charName||'';
 this.store=await loadStore(charId);
 if(!this.store.characterName&&charName)this.store.characterName=charName;
+// Migration: appearance→person (v1.14.0)
+let migrated=0;
+for(const m of Object.values(this.store.memories)){
+if(m.subtype==='appearance'){m.subtype='person';migrated++;}
+}
+if(migrated){await saveStore(this.store);console.log(`[NM] Migrated ${migrated} appearance→person memories`);}
 this.messageCounter=0;
 console.log(`[NM] Loaded store for ${charName}: ${Object.keys(this.store.memories).length} memories, ${Object.keys(this.store.entities).length} entities`);
 }
@@ -144,7 +150,6 @@ relational:mems.filter(m=>m.type==='relational').length,
 },
 bySubtype:{
 person:mems.filter(m=>m.subtype==='person').length,
-appearance:mems.filter(m=>m.subtype==='appearance').length,
 plot:mems.filter(m=>m.subtype==='plot').length,
 },
 avgImportance:mems.length?mems.reduce((s,m)=>s+m.importance,0)/mems.length:0,
