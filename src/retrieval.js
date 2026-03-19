@@ -187,6 +187,22 @@ const intStr=entry.emotionalIntensity>=0.75?'★★★ highly':entry.emotionalIn
 return` | ${intStr} ${valStr}`;
 }
 
+// Bester Slot-Inhalt als Einzeiler (fuer kompakte Darstellung)
+function _bestSlotSummary(ent){
+let best=null,bestScore=0;
+for(const[name,slot]of Object.entries(ent.slots)){
+if(slot.mode==='SINGLE'&&slot.value){
+const s=(slot.importance||0.5)+(slot.value.length>20?0.2:0);
+if(s>bestScore){bestScore=s;best=slot.value}
+}else if(slot.mode==='ARRAY'){
+for(const e of slot.entries){
+const s=(e.importance||0.5)+(e.emotionalIntensity||0)*0.3;
+if(s>bestScore){bestScore=s;best=e.content}
+}}
+}
+return best?best.substring(0,120):null;
+}
+
 // ============================================================
 // Formatiere Entity-Kontext fuer Prompt-Injektion
 // ============================================================
@@ -210,7 +226,7 @@ if(store?.digest?.text){
 if(!add(`[Character Essence]\n${store.digest.text}\n\n`))return out;
 }
 
-// Block 2: Entities nach Typ sortiert (Personen zuerst, dann Locations, Items, Factions, Concepts)
+// Block 2: Entities nach Typ sortiert, Score absteigend
 const typeOrder=['person','location','item','faction','concept'];
 const sorted=[...mainResults].sort((a,b)=>{
 const ai=typeOrder.indexOf(a.entity.type);
@@ -219,37 +235,57 @@ if(ai!==bi)return ai-bi;
 return b.score-a.score;
 });
 
+// Top-Entities (score >= 0.6 oder Top 5) bekommen volle Slots,
+// Rest bekommt nur kompakte Einzeiler
+const FULL_THRESHOLD=0.6;
+const MIN_FULL=3;
+const MAX_FULL=6;
+let fullCount=0;
 for(const r of sorted){
+if(r.score>=FULL_THRESHOLD)fullCount++;
+}
+fullCount=Math.max(MIN_FULL,Math.min(MAX_FULL,fullCount));
+
+for(let i=0;i<sorted.length;i++){
+const r=sorted[i];
 const ent=r.entity;
-const icon=ENTITY_TYPE_ICONS[ent.type]||'';
 const typeLabel=ent.type.charAt(0).toUpperCase()+ent.type.slice(1);
+const isFull=i<fullCount;
+
+if(isFull){
+// === VOLLER OUTPUT: alle Slots ===
 if(!add(`[${typeLabel}: ${ent.name}]\n`))break;
+const schema=ENTITY_SCHEMAS[ent.type]||{};
 
 // SINGLE Slots als direkte Zeilen
-const schema=ENTITY_SCHEMAS[ent.type]||{};
 for(const[slotName,slotDef]of Object.entries(schema)){
 const slot=ent.slots[slotName];
-if(!slot)continue;
-if(slot.mode==='SINGLE'&&slot.value){
-const label=slotDef.label||slotName;
-if(!add(`${label}: ${slot.value}\n`))break;
-}
+if(!slot||slot.mode!=='SINGLE'||!slot.value)continue;
+if(!add(`${slotDef.label||slotName}: ${slot.value}\n`))break;
 }
 
-// ARRAY Slots als Bullet-Eintraege (nur relevante, max 3 pro Slot)
+// ARRAY Slots als Bullets (max 3 pro Slot)
 for(const[slotName,slotDef]of Object.entries(schema)){
 const slot=ent.slots[slotName];
 if(!slot||slot.mode!=='ARRAY'||!slot.entries.length)continue;
-// Sortiere nach Wichtigkeit/Neuheit
 const entries=[...slot.entries]
 .sort((a,b)=>(b.importance||0)-(a.importance||0)||(b.createdAt||0)-(a.createdAt||0))
-.slice(0,4);
+.slice(0,3);
 for(const entry of entries){
 const emo=emotionLabel(entry);
 if(!add(`* ${slotDef.label||slotName}: ${entry.content}${emo}\n`))break;
 }
 }
 add('\n');
+}else{
+// === KOMPAKTER OUTPUT: nur Name + wichtigster Inhalt ===
+const best=_bestSlotSummary(ent);
+if(best){
+if(!add(`[${typeLabel}: ${ent.name}] ${best}\n`))break;
+}else{
+if(!add(`[${typeLabel}: ${ent.name}]\n`))break;
+}
+}
 }
 
 // Block 3: Emotionaler Zustand
