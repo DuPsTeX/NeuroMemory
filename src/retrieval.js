@@ -1,183 +1,201 @@
 import{BM25,tokenize,extractKeywords,now,hrs,expDecay,clamp}from'./utils.js';
 import{spreadingActivation}from'./network.js';
-import{extractEntitiesFromText}from'./entities.js';
-import{getAllMemories,getAllEntities}from'./store.js';
+import{extractEntitiesFromText,ENTITY_SCHEMAS,ENTITY_TYPE_ICONS}from'./entities.js';
+import{getAllEntities,getAllSlotEntries,getEntity}from'./store.js';
 
-// Multi-Signal Retrieval mit BM25 + Spreading Activation + Scoring
-export function retrieveMemories(store,message,opts={}){
+// ============================================================
+// Multi-Signal Retrieval — Entity-zentrisch (v2)
+// ============================================================
+
+export function retrieveEntities(store,message,opts={}){
 const{
-topK=10,maxHops=3,decayPerHop=0.5,activationThreshold=0.15,
+topK=15,maxHops=3,decayPerHop=0.5,activationThreshold=0.15,
 halfLifeHours=720,emotionFactor=0.5,
 weights={activation:0.30,importance:0.20,retrievability:0.15,emotion:0.25,recency:0.10}
 }=opts;
 
-const mems=getAllMemories(store);
-if(!mems.length)return[];
-
 const entities=getAllEntities(store);
+if(!entities.length)return[];
+
+const allEntries=getAllSlotEntries(store);
+if(!allEntries.length)return[];
+
 const queryTokens=tokenize(message);
 const queryKeywords=extractKeywords(message);
-const queryEntities=extractEntitiesFromText(message,entities);
+const queryEntityNames=extractEntitiesFromText(message,entities);
 
 // Phase 1a: BM25 auf Keywords (gespeicherte Extraktions-Keywords)
 const bm25k=new BM25;
-for(const m of mems)bm25k.add(m.id,m.keywords||[]);
-const bm25KwResults=bm25k.search(queryKeywords,Math.min(mems.length,50));
+for(const e of allEntries)bm25k.add(e.entityId+'|'+e.slotName+'|'+(e.entryId||'S'),e.keywords||[]);
+const bm25KwResults=bm25k.search(queryKeywords,Math.min(allEntries.length,50));
 
-// Phase 1b: BM25 auf Content-Text (Fallback fuer Sprach-Mismatch DE/EN)
+// Phase 1b: BM25 auf Content-Text (Fallback DE/EN Mismatch)
 const bm25c=new BM25;
-for(const m of mems)bm25c.add(m.id,tokenize(m.content||''));
-const bm25ContentResults=bm25c.search(queryTokens,Math.min(mems.length,50));
+for(const e of allEntries)bm25c.add(e.entityId+'|'+e.slotName+'|'+(e.entryId||'S'),tokenize(e.content||''));
+const bm25ContentResults=bm25c.search(queryTokens,Math.min(allEntries.length,50));
 
-// Kombiniere beide BM25-Ergebnisse
-const bm25Scores=new Map;
-for(const r of bm25KwResults)bm25Scores.set(r.id,(bm25Scores.get(r.id)||0)+r.score);
-for(const r of bm25ContentResults)bm25Scores.set(r.id,(bm25Scores.get(r.id)||0)+r.score*0.6);
+// BM25-Scores auf Entity-Ebene aggregieren
+const entityBm25=new Map;
+function addBm25(id,score){
+const entId=id.split('|')[0];
+entityBm25.set(entId,(entityBm25.get(entId)||0)+score);
+}
+for(const r of bm25KwResults)addBm25(r.id,r.score);
+for(const r of bm25ContentResults)addBm25(r.id,r.score*0.6);
 
-// Normalisiere BM25 Scores
-const allBm25=Array.from(bm25Scores.values());
-const maxBM25=allBm25.length?Math.max(...allBm25):1;
+const maxBM25=entityBm25.size?Math.max(...entityBm25.values()):1;
 
-// Phase 2: Entity-Match (case-insensitive)
+// Phase 2: Entity-Match (Name/Alias im Message)
+const matchedEntityIds=new Set;
 const msgLower=message.toLowerCase();
-const entityMatches=new Set;
-for(const qe of queryEntities){
 for(const ent of entities){
-if(ent.name.toLowerCase()===qe.toLowerCase()||ent.aliases.some(a=>a.toLowerCase()===qe.toLowerCase())){
-entityMatches.add(ent.id);
-for(const m of mems){
-if(m.entities.some(e=>e.toLowerCase()===ent.name.toLowerCase()))entityMatches.add(m.id);
-}}}}
-// Zusaetzlich: direkte Namensnennung im Message-Text
+if(msgLower.includes(ent.name.toLowerCase())){matchedEntityIds.add(ent.id);continue}
+if(ent.aliases.some(a=>msgLower.includes(a.toLowerCase())))matchedEntityIds.add(ent.id);
+}
+for(const qe of queryEntityNames){
+const ql=qe.toLowerCase();
 for(const ent of entities){
-if(msgLower.includes(ent.name.toLowerCase())){
-entityMatches.add(ent.id);
-for(const m of mems){
-if(m.entities.some(e=>e.toLowerCase()===ent.name.toLowerCase()))entityMatches.add(m.id);
-}}}
+if(ent.name.toLowerCase()===ql||ent.aliases.some(a=>a.toLowerCase()===ql))matchedEntityIds.add(ent.id);
+}}
 
-// Phase 3: Initiale Aktivierungen
+// Phase 3: Initiale Aktivierungen auf Entity-Ebene
 const initialAct=new Map;
-for(const[id,score]of bm25Scores){
+for(const[id,score]of entityBm25){
 initialAct.set(id,clamp(score/(maxBM25||1)));
 }
-for(const id of entityMatches){
+for(const id of matchedEntityIds){
 const cur=initialAct.get(id)||0;
 initialAct.set(id,clamp(Math.max(cur,0.7)));
 }
 
-// Fallback: wenn kein Treffer (z.B. Sprach-Mismatch), Top-K nach Wichtigkeit/Retrievability
+// Fallback: kein Signal → Top-Entities nach Wichtigkeit
 if(!initialAct.size){
 const t0=now();
-const fallback=mems.map(m=>{
-const effStab=m.stability*(1+m.emotionalIntensity*emotionFactor);
-const ret=expDecay(hrs(t0-m.lastReinforcedAt),effStab,halfLifeHours);
-const recH=hrs(t0-m.lastAccessedAt);
-const rec=clamp(1/(1+recH/168));
-return{memory:m,score:m.importance*0.4+ret*0.4+rec*0.2,activation:0.1,retrievability:ret};
+const entScores=entities.map(ent=>{
+const slots=Object.values(ent.slots);
+let maxImp=0,maxRet=0;
+for(const s of slots){
+if(s.mode==='SINGLE'&&s.value){
+maxImp=Math.max(maxImp,s.importance||0);
+const effStab=(s.stability||1)*(1+(s.emotionalIntensity||0)*emotionFactor);
+maxRet=Math.max(maxRet,expDecay(hrs(t0-(s.lastReinforcedAt||s.updatedAt||t0)),effStab,halfLifeHours));
+}else if(s.mode==='ARRAY'){
+for(const e of s.entries){
+maxImp=Math.max(maxImp,e.importance||0);
+const effStab=(e.stability||1)*(1+(e.emotionalIntensity||0)*emotionFactor);
+maxRet=Math.max(maxRet,expDecay(hrs(t0-(e.lastReinforcedAt||e.createdAt||t0)),effStab,halfLifeHours));
+}}}
+return{entity:ent,score:maxImp*0.5+maxRet*0.3+(ent.mentionCount>3?0.2:0.1)};
 }).sort((a,b)=>b.score-a.score).slice(0,topK);
-console.log('[NM] retrieval: no query signal, using fallback top-'+fallback.length);
-return fallback;
+console.log('[NM] retrieval: no query signal, fallback top-'+entScores.length);
+return entScores.map(es=>({entity:es.entity,score:es.score,activation:0.1}));
 }
 
-// Phase 4: Spreading Activation
+// Phase 4: Spreading Activation ueber Entity-Connections
 const activations=spreadingActivation(store,initialAct,{maxHops,decayPerHop,threshold:activationThreshold});
 
-// Phase 5: Multi-Signal Scoring
+// Phase 5: Multi-Signal Scoring pro Entity
 const t=now();
 const scored=[];
-for(const m of mems){
-const act=activations.get(m.id)||0;
-if(act<activationThreshold*0.5&&!bm25Scores.has(m.id))continue;
+for(const ent of entities){
+const act=activations.get(ent.id)||0;
+if(act<activationThreshold*0.5&&!entityBm25.has(ent.id))continue;
 
-const effStab=m.stability*(1+m.emotionalIntensity*emotionFactor);
-const retrievability=expDecay(hrs(t-m.lastReinforcedAt),effStab,halfLifeHours);
-const recencyH=hrs(t-m.lastAccessedAt);
-const recencyBoost=clamp(1/(1+recencyH/168));// 168h=1 Woche Halbwertszeit
+// Aggregiere Slot-Metriken
+let maxImp=0,maxEmoInt=0,maxRet=0,bestRecency=Infinity;
+for(const slot of Object.values(ent.slots)){
+if(slot.mode==='SINGLE'&&slot.value){
+maxImp=Math.max(maxImp,slot.importance||0);
+maxEmoInt=Math.max(maxEmoInt,slot.emotionalIntensity||0);
+const effStab=(slot.stability||1)*(1+(slot.emotionalIntensity||0)*emotionFactor);
+maxRet=Math.max(maxRet,expDecay(hrs(t-(slot.lastReinforcedAt||slot.updatedAt||t)),effStab,halfLifeHours));
+bestRecency=Math.min(bestRecency,t-(slot.lastAccessedAt||slot.updatedAt||t));
+}else if(slot.mode==='ARRAY'){
+for(const e of slot.entries){
+maxImp=Math.max(maxImp,e.importance||0);
+maxEmoInt=Math.max(maxEmoInt,e.emotionalIntensity||0);
+const effStab=(e.stability||1)*(1+(e.emotionalIntensity||0)*emotionFactor);
+maxRet=Math.max(maxRet,expDecay(hrs(t-(e.lastReinforcedAt||e.createdAt||t)),effStab,halfLifeHours));
+bestRecency=Math.min(bestRecency,t-(e.lastAccessedAt||e.createdAt||t));
+}}}
+
+const recencyBoost=clamp(1/(1+hrs(bestRecency)/168));
 
 const score=
 (act||0)*weights.activation+
-m.importance*weights.importance+
-retrievability*weights.retrievability+
-m.emotionalIntensity*weights.emotion+
+maxImp*weights.importance+
+maxRet*weights.retrievability+
+maxEmoInt*weights.emotion+
 recencyBoost*weights.recency;
 
-scored.push({memory:m,score,activation:act,retrievability});
+scored.push({entity:ent,score,activation:act,retrievability:maxRet});
 }
 
 scored.sort((a,b)=>b.score-a.score);
 const result=scored.slice(0,topK);
 
-// Memory Surprise: 15% Chance fuer spontane starke emotionale Erinnerung (wie ein Flashback)
+// Memory Surprise: 15% Chance fuer spontane emotionale Entity
 if(Math.random()<0.15){
-const candidates=mems.filter(m=>
-!result.some(s=>s.memory.id===m.id)&&(m.emotionalIntensity||0)>=0.6
-).sort((a,b)=>(b.emotionalIntensity||0)-(a.emotionalIntensity||0));
+const candidates=entities.filter(ent=>{
+if(result.some(r=>r.entity.id===ent.id))return false;
+for(const slot of Object.values(ent.slots)){
+if(slot.mode==='SINGLE'&&(slot.emotionalIntensity||0)>=0.6)return true;
+if(slot.mode==='ARRAY'&&slot.entries.some(e=>(e.emotionalIntensity||0)>=0.6))return true;
+}return false;
+});
 if(candidates.length){
-result.push({memory:candidates[0],score:0.05,activation:0.05,
-retrievability:candidates[0].retrievability,isSurprise:true});
-console.log('[NM] Memory Surprise:',candidates[0].content.substring(0,60));
+const pick=candidates[Math.floor(Math.random()*Math.min(candidates.length,5))];
+result.push({entity:pick,score:0.05,activation:0.05,retrievability:0.5,isSurprise:true});
+console.log('[NM] Memory Surprise: entity',pick.name);
 }
 }
 
 return result;
 }
 
-// Berechne aktuellen emotionalen Zustand aus den letzten emotional relevanten Memories
+// ============================================================
+// Emotionaler Zustand aus Entity-Emotion-Slots
+// ============================================================
+
 function computeEmotionalState(store){
 if(!store)return null;
-const mems=Object.values(store.memories)
-.filter(m=>(m.emotionalIntensity||0)>0.2)
-.sort((a,b)=>b.createdAt-a.createdAt).slice(0,10);
-if(mems.length<2)return null;
-const avg=mems.reduce((s,m)=>s+(m.emotionalValence||0),0)/mems.length;
-const half=Math.floor(mems.length/2);
-const recentAvg=mems.slice(0,half).reduce((s,m)=>s+(m.emotionalValence||0),0)/half;
-const olderAvg=mems.slice(half).reduce((s,m)=>s+(m.emotionalValence||0),0)/(mems.length-half);
+const allEntries=[];
+for(const ent of Object.values(store.entities)){
+const emotSlot=ent.slots.emotions;
+if(!emotSlot||emotSlot.mode!=='ARRAY')continue;
+for(const e of emotSlot.entries){
+if((e.emotionalIntensity||0)>0.2)allEntries.push(e);
+}}
+if(allEntries.length<2)return null;
+allEntries.sort((a,b)=>(b.createdAt||0)-(a.createdAt||0));
+const top=allEntries.slice(0,10);
+const avg=top.reduce((s,e)=>s+(e.emotionalValence||0),0)/top.length;
+const half=Math.floor(top.length/2);
+const recentAvg=top.slice(0,half).reduce((s,e)=>s+(e.emotionalValence||0),0)/half;
+const olderAvg=top.slice(half).reduce((s,e)=>s+(e.emotionalValence||0),0)/(top.length-half);
 const trend=recentAvg-olderAvg;
-const state=avg>0.5?'joyful':avg>0.2?'content':avg>-0.2?(mems.some(m=>(m.emotionalIntensity||0)>0.6)?'conflicted':'calm'):avg>-0.5?'troubled':'grieving';
+const state=avg>0.5?'joyful':avg>0.2?'content':avg>-0.2?(top.some(e=>(e.emotionalIntensity||0)>0.6)?'conflicted':'calm'):avg>-0.5?'troubled':'grieving';
 const trendStr=trend>0.15?', trending hopeful':trend<-0.15?', darkening':'';
-return`Current Emotional State: ${state}${trendStr}`;
+return`Emotional State: ${state}${trendStr}`;
 }
 
-// Emotion-Label fuer Prompt: ★★★ highly negative etc.
-function emotionLabel(m){
-if(!m.emotionalIntensity||m.emotionalIntensity<0.3)return'';
-const valStr=m.emotionalValence>0.3?'positive':m.emotionalValence<-0.3?'negative':'mixed';
-const intStr=m.emotionalIntensity>=0.75?'★★★ highly':m.emotionalIntensity>=0.5?'★★':' ★ slightly';
+// Emotion-Label fuer einzelne Eintraege
+function emotionLabel(entry){
+if(!entry.emotionalIntensity||entry.emotionalIntensity<0.3)return'';
+const valStr=entry.emotionalValence>0.3?'positive':entry.emotionalValence<-0.3?'negative':'mixed';
+const intStr=entry.emotionalIntensity>=0.75?'★★★ highly':entry.emotionalIntensity>=0.5?'★★':' ★ slightly';
 return` | ${intStr} ${valStr}`;
 }
 
-// Formatiere Memories als tiered Kontext-Block fuer Prompt-Injektion
-export function formatMemoryContext(results,maxTokens=500,store=null){
+// ============================================================
+// Formatiere Entity-Kontext fuer Prompt-Injektion
+// ============================================================
+
+export function formatEntityContext(results,maxTokens=500,store=null){
 if(!results.length)return'';
 
-// Surprise-Memory separieren
 const surprise=results.find(r=>r.isSurprise);
 const mainResults=results.filter(r=>!r.isSurprise);
-
-// Subtype-Tiers: Person + Plot separat sammeln
-const person=mainResults.filter(r=>r.memory.subtype==='person');
-const persIds=new Set(person.map(r=>r.memory.id));
-const plot=mainResults.filter(r=>r.memory.subtype==='plot')
-.sort((a,b)=>a.memory.createdAt-b.memory.createdAt);// chronologisch
-const plotIds=new Set(plot.map(r=>r.memory.id));
-const excludeIds=new Set([...persIds,...plotIds]);
-
-// In Tiers aufteilen (ohne appearance/plot)
-const defining=mainResults
-.filter(r=>(r.memory.emotionalIntensity||0)>=0.5&&!excludeIds.has(r.memory.id))
-.sort((a,b)=>(b.memory.emotionalIntensity||0)-(a.memory.emotionalIntensity||0))
-.slice(0,3);
-const defIds=new Set(defining.map(r=>r.memory.id));
-
-const recent=mainResults
-.filter(r=>r.memory.type==='episodic'&&!defIds.has(r.memory.id)&&!excludeIds.has(r.memory.id))
-.sort((a,b)=>b.memory.createdAt-a.memory.createdAt)
-.slice(0,4);
-const recIds=new Set(recent.map(r=>r.memory.id));
-
-const background=mainResults.filter(r=>!defIds.has(r.memory.id)&&!recIds.has(r.memory.id)&&!excludeIds.has(r.memory.id));
 
 let out='';
 let approxTokens=0;
@@ -192,124 +210,152 @@ if(store?.digest?.text){
 if(!add(`[Character Essence]\n${store.digest.text}\n\n`))return out;
 }
 
-// Block 1b: Character Profiles (subtype=person)
-if(person.length){
-if(!add('[Character Profiles]\n'))return out;
-for(const r of person){
-const m=r.memory;
-if(!add(`• ${m.content}\n`))break;
+// Block 2: Entities nach Typ sortiert (Personen zuerst, dann Locations, Items, Factions, Concepts)
+const typeOrder=['person','location','item','faction','concept'];
+const sorted=[...mainResults].sort((a,b)=>{
+const ai=typeOrder.indexOf(a.entity.type);
+const bi=typeOrder.indexOf(b.entity.type);
+if(ai!==bi)return ai-bi;
+return b.score-a.score;
+});
+
+for(const r of sorted){
+const ent=r.entity;
+const icon=ENTITY_TYPE_ICONS[ent.type]||'';
+const typeLabel=ent.type.charAt(0).toUpperCase()+ent.type.slice(1);
+if(!add(`[${typeLabel}: ${ent.name}]\n`))break;
+
+// SINGLE Slots als direkte Zeilen
+const schema=ENTITY_SCHEMAS[ent.type]||{};
+for(const[slotName,slotDef]of Object.entries(schema)){
+const slot=ent.slots[slotName];
+if(!slot)continue;
+if(slot.mode==='SINGLE'&&slot.value){
+const label=slotDef.label||slotName;
+if(!add(`${label}: ${slot.value}\n`))break;
 }
-if(!add('\n'))return out;
 }
 
-// Block 2: Aktueller emotionaler Zustand
+// ARRAY Slots als Bullet-Eintraege (nur relevante, max 3 pro Slot)
+for(const[slotName,slotDef]of Object.entries(schema)){
+const slot=ent.slots[slotName];
+if(!slot||slot.mode!=='ARRAY'||!slot.entries.length)continue;
+// Sortiere nach Wichtigkeit/Neuheit
+const entries=[...slot.entries]
+.sort((a,b)=>(b.importance||0)-(a.importance||0)||(b.createdAt||0)-(a.createdAt||0))
+.slice(0,4);
+for(const entry of entries){
+const emo=emotionLabel(entry);
+if(!add(`* ${slotDef.label||slotName}: ${entry.content}${emo}\n`))break;
+}
+}
+add('\n');
+}
+
+// Block 3: Emotionaler Zustand
 const emotState=computeEmotionalState(store);
 if(emotState){
-if(!add(`[${emotState}]\n\n`))return out;
+add(`[${emotState}]\n`);
 }
 
-// Block 2b: Story So Far (subtype=plot, chronologisch)
-if(plot.length){
-if(!add('[Story So Far]\n'))return out;
-for(const r of plot){
-if(!add(`• ${r.memory.content}\n`))break;
-}
-if(!add('\n'))return out;
-}
-
-// Block 3: Defining Memories (high emotional weight)
-if(defining.length){
-if(!add('[Defining Memories — High Emotional Weight]\n'))return out;
-for(const r of defining){
-const m=r.memory;
-const intStr=(m.emotionalIntensity||0)>=0.75?'★★★':(m.emotionalIntensity||0)>=0.5?'★★ ':'★  ';
-if(!add(`${intStr} ${m.content}${emotionLabel(m)}\n`))break;
-}
-if(!add('\n'))return out;
-}
-
-// Block 4: Recent Events (episodic, nicht defining)
-if(recent.length){
-if(!add('[Recent Events]\n'))return out;
-for(const r of recent){
-if(!add(`• ${r.memory.content}\n`))break;
-}
-if(!add('\n'))return out;
-}
-
-// Block 5: Background Knowledge (semantic + relational)
-if(background.length){
-if(!add('[Background Knowledge]\n'))return out;
-for(const r of background){
-const m=r.memory;
-const emo=emotionLabel(m);
-if(!add(`• ${m.content}${emo?` [${m.type}${emo}]`:''}\n`))break;
-}
-}
-
-// Block 6: Sudden Recall (Memory Surprise — spontaner Flashback)
+// Block 4: Sudden Recall (Surprise)
 if(surprise){
-const m=surprise.memory;
-const intStr=(m.emotionalIntensity||0)>=0.75?'★★★':(m.emotionalIntensity||0)>=0.5?'★★ ':'★  ';
-add(`\n[Sudden Recall]\n${intStr} Unvermutet taucht auf: "${m.content}"${emotionLabel(m)}\n`);
+const ent=surprise.entity;
+// Finde den emotionalsten Eintrag
+let bestEntry=null,bestInt=0;
+for(const slot of Object.values(ent.slots)){
+if(slot.mode==='SINGLE'&&(slot.emotionalIntensity||0)>bestInt){
+bestEntry={content:slot.value,emotionalIntensity:slot.emotionalIntensity,emotionalValence:slot.emotionalValence};
+bestInt=slot.emotionalIntensity;
+}else if(slot.mode==='ARRAY'){
+for(const e of slot.entries){
+if((e.emotionalIntensity||0)>bestInt){bestEntry=e;bestInt=e.emotionalIntensity}
+}}}
+if(bestEntry){
+const intStr=bestInt>=0.75?'★★★':bestInt>=0.5?'★★':'★';
+add(`[Sudden Recall] ${intStr} "${bestEntry.content}"${emotionLabel(bestEntry)}\n`);
+}
 }
 
 return out;
 }
 
-// Reinforcement: Memory wurde abgerufen → Stabilitaet erhoehen
-export function reinforceMemories(results){
+// ============================================================
+// Reinforcement: Entity-Slots wurden abgerufen
+// ============================================================
+
+export function reinforceEntities(results){
 const t=now();
 for(const r of results){
-const m=r.memory;
-m.accessCount++;
-m.lastAccessedAt=t;
-m.lastReinforcedAt=t;
-m.stability=m.stability*1.5+0.1;
-m.retrievability=1.0;
+const ent=r.entity;
+ent.lastSeen=t;
+ent.mentionCount=(ent.mentionCount||0)+1;
+// Alle Slots der Entity reinforcen
+for(const slot of Object.values(ent.slots)){
+if(slot.mode==='SINGLE'&&slot.value){
+slot.accessCount=(slot.accessCount||0)+1;
+slot.lastAccessedAt=t;
+slot.lastReinforcedAt=t;
+slot.stability=(slot.stability||1)*1.3+0.05;
+slot.retrievability=1.0;
+}else if(slot.mode==='ARRAY'){
+for(const e of slot.entries){
+e.accessCount=(e.accessCount||0)+1;
+e.lastAccessedAt=t;
+e.lastReinforcedAt=t;
+e.stability=(e.stability||1)*1.3+0.05;
+e.retrievability=1.0;
+}}}
 }
 }
 
-// Selective Reinforcement: Nur Memories boosten die die KI tatsaechlich benutzt hat
+// Selective Reinforcement: Nur Slots boosten die die KI benutzt hat
 export function selectiveReinforce(results,responseText){
 if(!responseText||!results.length)return;
 const t=now();
 const respLower=responseText.toLowerCase();
 const respTokens=new Set(tokenize(responseText));
+
 for(const r of results){
-const m=r.memory;
-// Check: Hat die KI Entities oder Keywords aus dieser Memory erwaehnt?
-const entityHit=m.entities.some(e=>respLower.includes(e.toLowerCase()));
-const keywordHits=(m.keywords||[]).filter(k=>respTokens.has(k)).length;
-const contentWords=tokenize(m.content);
-const contentOverlap=contentWords.filter(w=>respTokens.has(w)).length;
-const used=entityHit||keywordHits>=2||contentOverlap>=3;
-if(used){
-// KI hat diese Memory aufgegriffen → extra Boost
-m.stability=m.stability*1.2+0.05;
-r._used=true;
-console.log('[NM] selective: USED',m.content.substring(0,50));
+const ent=r.entity;
+const nameUsed=respLower.includes(ent.name.toLowerCase())||
+ent.aliases.some(a=>respLower.includes(a.toLowerCase()));
+
+for(const slot of Object.values(ent.slots)){
+if(slot.mode==='SINGLE'&&slot.value){
+const kw=(slot.keywords||[]).filter(k=>respTokens.has(k)).length;
+const contentOverlap=tokenize(slot.value).filter(w=>respTokens.has(w)).length;
+if(nameUsed||kw>=2||contentOverlap>=3){
+slot.stability=(slot.stability||1)*1.2+0.05;
 }else{
-// Injiziert aber ignoriert → leichter Abzug
-m.stability=Math.max(0.5,m.stability*0.95);
-r._used=false;
+slot.stability=Math.max(0.5,(slot.stability||1)*0.95);
 }
+}else if(slot.mode==='ARRAY'){
+for(const e of slot.entries){
+const kw=(e.keywords||[]).filter(k=>respTokens.has(k)).length;
+const contentOverlap=tokenize(e.content).filter(w=>respTokens.has(w)).length;
+if(nameUsed||kw>=2||contentOverlap>=3){
+e.stability=(e.stability||1)*1.2+0.05;
+}else{
+e.stability=Math.max(0.5,(e.stability||1)*0.95);
+}
+}}}
 }
 }
 
-// Themen aus den letzten Nachrichten extrahieren (ohne LLM, rein heuristisch)
+// ============================================================
+// Themen-Extraktion (unveraendert)
+// ============================================================
+
 export function extractConversationThemes(messages,maxThemes=5){
 if(!messages||messages.length<2)return[];
-// Nimm die letzten 6 Nachrichten
 const recent=messages.slice(-6);
 const freq=new Map;
 for(const msg of recent){
 const tokens=tokenize(msg.mes||'');
 for(const t of tokens){
 if(t.length>2)freq.set(t,(freq.get(t)||0)+1);
-}
-}
-// Top-Themen nach Haeufigkeit (nur Woerter die in mind. 2 Messages vorkommen)
+}}
 return[...freq.entries()]
 .filter(([,c])=>c>=2)
 .sort((a,b)=>b[1]-a[1])
@@ -317,40 +363,44 @@ return[...freq.entries()]
 .map(([w])=>w);
 }
 
-// Dynamic Injection Hint basierend auf injiziertem Kontext
+// ============================================================
+// Dynamic Hint fuer Entity-Kontext
+// ============================================================
+
 export function buildDynamicHint(results,store){
 if(!results.length)return'';
 const parts=[];
-// Emotionaler Zustand
+
 const emotState=computeEmotionalState(store);
 if(emotState){
-const state=emotState.replace('Current Emotional State: ','');
-parts.push(`The character's emotional state is ${state}`);
+parts.push(`The character's ${emotState.toLowerCase()}`);
 }
-// Surprise Memory
+
 const surprise=results.find(r=>r.isSurprise);
 if(surprise){
 parts.push(`An unexpected memory just surfaced — let it subtly color the response`);
 }
-// Person + Plot Hinweise
-const hasPerson=results.some(r=>r.memory.subtype==='person');
-const hasPlot=results.some(r=>r.memory.subtype==='plot');
-if(hasPerson)parts.push(`Character profiles are loaded — reference names, roles, appearance and stats when relevant`);
-if(hasPlot)parts.push(`Key story events are loaded — maintain continuity with established timeline`);
-// Dominante Memory-Typen
-const types=results.map(r=>r.memory.type);
-const hasEmotional=types.includes('emotional');
-const hasRelational=types.includes('relational');
-if(hasEmotional&&hasRelational){
-parts.push(`Both emotional memories and relationship dynamics are active — weave them naturally`);
-}else if(hasEmotional){
-parts.push(`Emotionally charged memories are active — reflect the underlying feelings`);
+
+// Entity-Typ-Hinweise
+const types=new Set(results.map(r=>r.entity.type));
+if(types.has('person'))parts.push('Character profiles are loaded — reference names, roles, appearance and stats when relevant');
+if(types.has('location'))parts.push('Location details are loaded — use setting descriptions naturally');
+
+// Intensive emotionale Eintraege
+let intenseCount=0;
+for(const r of results){
+for(const slot of Object.values(r.entity.slots)){
+if(slot.mode==='SINGLE'&&(slot.emotionalIntensity||0)>=0.7)intenseCount++;
+else if(slot.mode==='ARRAY')intenseCount+=slot.entries.filter(e=>(e.emotionalIntensity||0)>=0.7).length;
+}}
+if(intenseCount>0){
+parts.push(`${intenseCount} deeply impactful ${intenseCount===1?'memory is':'memories are'} present — these should influence tone and behavior`);
 }
-// Intensive Memories
-const intense=results.filter(r=>(r.memory.emotionalIntensity||0)>=0.7);
-if(intense.length){
-parts.push(`${intense.length} deeply impactful ${intense.length===1?'memory is':'memories are'} present — these should influence tone and behavior`);
-}
+
+// Plot vorhanden?
+const hasPlot=results.some(r=>r.entity.slots.plot?.entries?.length>0);
+if(hasPlot)parts.push('Key story events are loaded — maintain continuity with established timeline');
+
 if(!parts.length)return'[Memory Recall Active: Naturally weave relevant memories into your response without explicitly labeling them as "memories" or "recollections".]';
 return`[Memory Recall Active: ${parts.join('. ')}. Weave these naturally into the response without labeling them as memories.]`;
 }

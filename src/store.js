@@ -1,4 +1,5 @@
 import{now}from'./utils.js';
+import{createEntityNode,initSlots,createSlotEntry,ENTITY_SCHEMAS}from'./entities.js';
 
 // Context-Getter wird von index.js gesetzt
 let _getCtx=null;
@@ -15,65 +16,68 @@ else return null;
 }
 function k(charId){return`nm_${charId}`}
 
-// Speichert Store in extensionSettings (server-persistent via settings.json)
 function saveToSettings(store){
 const ctx=_getCtx?.();
 if(!ctx?.extensionSettings)return false;
 try{
 ctx.extensionSettings[SETTINGS_PREFIX+store.characterId]=JSON.parse(JSON.stringify(store));
 ctx.saveSettingsDebounced();
-console.log('[NM] saved to extensionSettings:',Object.keys(store.memories).length,'memories');
 return true;
 }catch(e){console.warn('[NM] saveToSettings err',e);return false}
 }
 
-// Laedt Store aus extensionSettings
 function loadFromSettings(charId){
 const ctx=_getCtx?.();
 if(!ctx?.extensionSettings)return null;
 const s=ctx.extensionSettings[SETTINGS_PREFIX+charId];
-if(s&&s.memories){
-console.log('[NM] loaded from extensionSettings:',Object.keys(s.memories).length,'memories for',charId);
-return s;
-}
+if(s&&(s.entities||s.memories))return s;
 return null;
 }
 
-export async function loadStore(charId){
-// Primaer: extensionSettings (server-seitig, 100% persistent)
-const fromSettings=loadFromSettings(charId);
-if(fromSettings)return fromSettings;
+// ============================================================
+// Store laden/speichern
+// ============================================================
 
-// Fallback: localforage (Migration alter Daten)
+export async function loadStore(charId){
+let data=loadFromSettings(charId);
+if(!data){
 try{
 const inst=lf();
 if(inst){
 const d=await inst.getItem(k(charId));
-if(d&&d.memories){
-console.log('[NM] migrating from localforage:',Object.keys(d.memories).length,'memories');
-// Zu extensionSettings migrieren
+if(d&&(d.memories||d.entities)){
+console.log('[NM] loading from localforage');
+data=d;
 saveToSettings(d);
-return d;
 }
 }
 }catch(e){console.warn('[NM] localforage load err',e)}
-
-return createEmpty(charId,'');
+}
+if(!data)return createEmpty(charId,'');
+// v1 → v2 Migration
+if(!data.meta?.schemaVersion||data.meta.schemaVersion<2){
+if(data.memories){
+console.log('[NM] migrating v1 → v2...');
+const v2=migrateV1toV2(data);
+await saveStore(v2);
+return v2;
+}
+}
+return data;
 }
 
 export function createEmpty(charId,charName){
 return{
 characterId:charId,characterName:charName,
-memories:{},entities:{},
-meta:{totalMemories:0,lastConsolidation:now(),schemaVersion:1}
+entities:{},
+meta:{totalSlotEntries:0,lastConsolidation:now(),schemaVersion:2},
+digest:null,
 };
 }
 
 export async function saveStore(store){
-store.meta.totalMemories=Object.keys(store.memories).length;
-// Primaer: extensionSettings
+store.meta.totalSlotEntries=countTotalEntries(store);
 saveToSettings(store);
-// Backup: localforage
 try{
 const inst=lf();
 if(inst)await inst.setItem(k(store.characterId),store);
@@ -81,49 +85,146 @@ if(inst)await inst.setItem(k(store.characterId),store);
 }
 
 export async function deleteStore(charId){
-// extensionSettings
 const ctx=_getCtx?.();
 if(ctx?.extensionSettings){
 delete ctx.extensionSettings[SETTINGS_PREFIX+charId];
 ctx.saveSettingsDebounced();
 }
-// localforage
 try{const inst=lf();if(inst)await inst.removeItem(k(charId))}catch(e){}
 }
 
-export function addMemory(store,mem){
-store.memories[mem.id]=mem;
-}
-
-export function removeMemory(store,memId){
-delete store.memories[memId];
-for(const m of Object.values(store.memories)){
-m.connections=m.connections.filter(c=>c.targetId!==memId);
-}
-for(const e of Object.values(store.entities)){
-e.connections=e.connections.filter(c=>c.targetId!==memId);
-}
-}
-
-export function updateMemory(store,memId,patch){
-if(store.memories[memId])Object.assign(store.memories[memId],patch);
-}
+// ============================================================
+// Entity CRUD
+// ============================================================
 
 export function addEntity(store,ent){
 store.entities[ent.id]=ent;
+}
+
+export function removeEntity(store,entId){
+delete store.entities[entId];
+for(const e of Object.values(store.entities)){
+e.connections=e.connections.filter(c=>c.targetId!==entId);
+}
 }
 
 export function getEntity(store,entId){
 return store.entities[entId]||null;
 }
 
-export function getAllMemories(store){
-return Object.values(store.memories);
+export function getEntityByName(store,name){
+const lower=name.toLowerCase();
+for(const e of Object.values(store.entities)){
+if(e.name.toLowerCase()===lower)return e;
+if(e.aliases.some(a=>a.toLowerCase()===lower))return e;
+}
+return null;
 }
 
 export function getAllEntities(store){
 return Object.values(store.entities);
 }
+
+// ============================================================
+// Slot CRUD
+// ============================================================
+
+export function updateSlotValue(store,entityId,slotName,value,metadata={}){
+const ent=store.entities[entityId];
+if(!ent)return false;
+const slot=ent.slots[slotName];
+if(!slot||slot.mode!=='SINGLE')return false;
+slot.value=typeof value==='string'?value.slice(0,500):value;
+slot.keywords=metadata.keywords||slot.keywords;
+slot.importance=metadata.importance??slot.importance;
+slot.stability=Math.max(slot.stability,(metadata.stability||1.0));
+slot.retrievability=1.0;
+slot.emotionalValence=metadata.emotionalValence??slot.emotionalValence;
+slot.emotionalIntensity=metadata.emotionalIntensity??slot.emotionalIntensity;
+slot.updatedAt=now();
+slot.lastReinforcedAt=now();
+if(metadata.pinned!==undefined)slot.pinned=metadata.pinned;
+if(metadata.userCreated!==undefined)slot.userCreated=metadata.userCreated;
+return true;
+}
+
+export function addSlotEntry(store,entityId,slotName,entry){
+const ent=store.entities[entityId];
+if(!ent)return false;
+const slot=ent.slots[slotName];
+if(!slot||slot.mode!=='ARRAY')return false;
+slot.entries.push(entry);
+return true;
+}
+
+export function removeSlotEntry(store,entityId,slotName,entryId){
+const ent=store.entities[entityId];
+if(!ent)return false;
+const slot=ent.slots[slotName];
+if(!slot||slot.mode!=='ARRAY')return false;
+slot.entries=slot.entries.filter(e=>e.id!==entryId);
+return true;
+}
+
+export function updateSlotEntry(store,entityId,slotName,entryId,patch){
+const ent=store.entities[entityId];
+if(!ent)return false;
+const slot=ent.slots[slotName];
+if(!slot||slot.mode!=='ARRAY')return false;
+const entry=slot.entries.find(e=>e.id===entryId);
+if(!entry)return false;
+Object.assign(entry,patch);
+return true;
+}
+
+export function getSlotValue(store,entityId,slotName){
+const ent=store.entities[entityId];
+if(!ent)return null;
+const slot=ent.slots[slotName];
+if(!slot)return null;
+return slot.mode==='SINGLE'?slot.value:slot.entries;
+}
+
+// ============================================================
+// Hilfsfunktionen
+// ============================================================
+
+export function getAllSlotEntries(store){
+const results=[];
+for(const ent of Object.values(store.entities)){
+for(const[slotName,slot]of Object.entries(ent.slots)){
+if(slot.mode==='SINGLE'&&slot.value){
+results.push({entityId:ent.id,entityName:ent.name,entityType:ent.type,
+slotName,entryId:null,content:slot.value,keywords:slot.keywords,
+importance:slot.importance,retrievability:slot.retrievability,
+emotionalIntensity:slot.emotionalIntensity,emotionalValence:slot.emotionalValence,
+pinned:slot.pinned,lastAccessedAt:slot.lastAccessedAt,lastReinforcedAt:slot.lastReinforcedAt,
+stability:slot.stability,accessCount:slot.accessCount,createdAt:slot.updatedAt});
+}else if(slot.mode==='ARRAY'){
+for(const entry of slot.entries){
+results.push({entityId:ent.id,entityName:ent.name,entityType:ent.type,
+slotName,entryId:entry.id,content:entry.content,keywords:entry.keywords,
+importance:entry.importance,retrievability:entry.retrievability,
+emotionalIntensity:entry.emotionalIntensity,emotionalValence:entry.emotionalValence,
+pinned:entry.pinned,lastAccessedAt:entry.lastAccessedAt,lastReinforcedAt:entry.lastReinforcedAt,
+stability:entry.stability,accessCount:entry.accessCount,createdAt:entry.createdAt});
+}}}}
+return results;
+}
+
+export function countTotalEntries(store){
+let count=0;
+for(const ent of Object.values(store.entities)){
+for(const slot of Object.values(ent.slots)){
+if(slot.mode==='SINGLE'&&slot.value)count++;
+else if(slot.mode==='ARRAY')count+=slot.entries.length;
+}}
+return count;
+}
+
+// ============================================================
+// Export/Import
+// ============================================================
 
 export async function exportStore(charId){
 const s=await loadStore(charId);
@@ -132,7 +233,121 @@ return JSON.stringify(s,null,2);
 
 export async function importStore(json){
 const s=JSON.parse(json);
-if(!s.characterId||!s.memories)throw new Error('Invalid store format');
+if(!s.characterId)throw new Error('Invalid store format');
+if(s.memories&&(!s.meta?.schemaVersion||s.meta.schemaVersion<2)){
+const v2=migrateV1toV2(s);
+await saveStore(v2);
+return v2;
+}
+if(!s.entities)throw new Error('Invalid v2 store format');
 await saveStore(s);
 return s;
+}
+
+// ============================================================
+// v1 → v2 Migration
+// ============================================================
+
+function migrateV1toV2(v1){
+const v2=createEmpty(v1.characterId,v1.characterName||'');
+if(v1.digest)v2.digest=v1.digest;
+
+const v1Mems=v1.memories?Object.values(v1.memories):[];
+const v1Ents=v1.entities?Object.values(v1.entities):[];
+
+// Finde Entities die person-Memories haben
+const personEntityNames=new Set;
+for(const m of v1Mems){
+if(m.subtype==='person'&&m.entities?.length){
+for(const e of m.entities)personEntityNames.add(e.toLowerCase());
+}}
+
+// Entities uebernehmen
+for(const oldEnt of v1Ents){
+const isPerson=personEntityNames.has(oldEnt.name.toLowerCase());
+const type=isPerson?'person':'concept';
+const newEnt=createEntityNode(oldEnt.name,v2.characterId,type);
+newEnt.id=oldEnt.id;
+newEnt.aliases=oldEnt.aliases||[];
+newEnt.firstSeen=oldEnt.firstSeen||now();
+newEnt.lastSeen=oldEnt.lastSeen||now();
+newEnt.mentionCount=oldEnt.mentionCount||1;
+newEnt.connections=(oldEnt.connections||[]).filter(c=>c.targetId?.startsWith('e_'));
+v2.entities[newEnt.id]=newEnt;
+}
+
+// Memories auf Slots verteilen
+for(const m of v1Mems){
+const entityName=m.entities?.[0];
+if(!entityName){
+// Orphan → _unassigned
+const unId='e__unassigned';
+if(!v2.entities[unId]){
+const un=createEntityNode('_unassigned',v2.characterId,'concept');
+un.id=unId;
+v2.entities[unId]=un;
+}
+const entry=_memToEntry(m);
+v2.entities[unId].slots.notes.entries.push(entry);
+continue;
+}
+
+const entId='e_'+entityName.toLowerCase().replace(/[^a-z0-9]/g,'_').slice(0,32);
+if(!v2.entities[entId]){
+const isPerson=personEntityNames.has(entityName.toLowerCase());
+const ent=createEntityNode(entityName,v2.characterId,isPerson?'person':'concept');
+ent.id=entId;
+v2.entities[entId]=ent;
+}
+const ent=v2.entities[entId];
+
+// Slot bestimmen
+let slotName='notes';
+if(m.subtype==='person')slotName='profile';
+else if(m.subtype==='plot')slotName='plot';
+else if(m.type==='emotional')slotName='emotions';
+else if(m.type==='relational')slotName='relations';
+else if(m.type==='episodic')slotName='plot';
+
+if(!ent.slots[slotName])slotName='notes';
+if(!ent.slots[slotName])continue;
+
+const slot=ent.slots[slotName];
+if(slot.mode==='SINGLE'){
+if(!slot.value||m.content.length>slot.value.length){
+slot.value=m.content.slice(0,500);
+slot.keywords=m.keywords||[];
+slot.importance=Math.max(slot.importance,m.importance||0.5);
+slot.stability=Math.max(slot.stability,m.stability||1.0);
+slot.retrievability=m.retrievability||1.0;
+slot.emotionalValence=m.emotionalValence||0;
+slot.emotionalIntensity=m.emotionalIntensity||0;
+slot.updatedAt=m.createdAt||now();
+slot.lastReinforcedAt=m.lastReinforcedAt||now();
+slot.pinned=slot.pinned||m.pinned||false;
+}
+}else{
+slot.entries.push(_memToEntry(m));
+}
+}
+
+const entCount=Object.keys(v2.entities).length;
+const slotCount=countTotalEntries(v2);
+console.log(`[NM] migration complete: ${v1Mems.length} memories → ${entCount} entities, ${slotCount} slot entries`);
+return v2;
+}
+
+function _memToEntry(m){
+const entry=createSlotEntry(m.content,{
+keywords:m.keywords,importance:m.importance,stability:m.stability,
+emotionalValence:m.emotionalValence,emotionalIntensity:m.emotionalIntensity,
+pinned:m.pinned,userCreated:m.userCreated,sourceMessageIds:m.sourceMessageIds,
+relatedEntities:m.entities?.slice(1)||[],
+});
+entry.retrievability=m.retrievability||1.0;
+entry.createdAt=m.createdAt||now();
+entry.lastAccessedAt=m.lastAccessedAt||now();
+entry.lastReinforcedAt=m.lastReinforcedAt||now();
+entry.accessCount=m.accessCount||0;
+return entry;
 }

@@ -1,16 +1,109 @@
 import{eid,now,tokenize}from'./utils.js';
 
-// Regelbasierte Entity-Extraktion als Fallback
-// Erkennt Eigennamen (Grossbuchstaben am Wortanfang, nicht am Satzanfang)
+// ============================================================
+// Entity-Schema-Registry: definiert Typen und Slots
+// ============================================================
+export const ENTITY_SCHEMAS={
+person:{
+profile:{mode:'SINGLE',label:'Profil',desc:'Name, Rolle, Level, HP, MP, Klasse, Faehigkeiten'},
+appearance:{mode:'SINGLE',label:'Aussehen',desc:'Physische Beschreibung'},
+personality:{mode:'SINGLE',label:'Persoenlichkeit',desc:'Charakterzuege, Vorlieben, Eigenheiten'},
+relations:{mode:'ARRAY',label:'Beziehungen',desc:'Beziehungen zu anderen Entities'},
+emotions:{mode:'ARRAY',label:'Emotionen',desc:'Emotional bedeutsame Erlebnisse'},
+plot:{mode:'ARRAY',label:'Story',desc:'Plot-Ereignisse mit dieser Person'},
+sexual:{mode:'ARRAY',label:'Intimitaet',desc:'Intime Aktivitaeten'},
+notes:{mode:'ARRAY',label:'Notizen',desc:'Sonstige Fakten'},
+},
+location:{
+description:{mode:'SINGLE',label:'Beschreibung',desc:'Aussehen, Atmosphaere, Lage'},
+management:{mode:'SINGLE',label:'Leitung',desc:'Wer den Ort betreibt/kontrolliert'},
+inventory:{mode:'ARRAY',label:'Inventar',desc:'Was es dort gibt/zu kaufen'},
+plot:{mode:'ARRAY',label:'Story',desc:'Ereignisse an diesem Ort'},
+notes:{mode:'ARRAY',label:'Notizen',desc:'Sonstige Fakten'},
+},
+item:{
+description:{mode:'SINGLE',label:'Beschreibung',desc:'Aussehen, Eigenschaften'},
+abilities:{mode:'SINGLE',label:'Faehigkeiten',desc:'Magische/spezielle Faehigkeiten'},
+owner:{mode:'SINGLE',label:'Besitzer',desc:'Aktueller Besitzer/Traeger'},
+plot:{mode:'ARRAY',label:'Story',desc:'Geschichte des Gegenstands'},
+notes:{mode:'ARRAY',label:'Notizen',desc:'Sonstige Fakten'},
+},
+faction:{
+description:{mode:'SINGLE',label:'Beschreibung',desc:'Was die Fraktion ist'},
+members:{mode:'ARRAY',label:'Mitglieder',desc:'Bekannte Mitglieder'},
+plot:{mode:'ARRAY',label:'Story',desc:'Ereignisse'},
+notes:{mode:'ARRAY',label:'Notizen',desc:'Sonstige Fakten'},
+},
+concept:{
+description:{mode:'SINGLE',label:'Beschreibung',desc:'Was es ist'},
+notes:{mode:'ARRAY',label:'Notizen',desc:'Details, Regeln'},
+},
+};
+
+export const ENTITY_TYPE_ICONS={person:'👤',location:'📍',item:'🗡️',faction:'⚔️',concept:'📚'};
+export const ENTITY_TYPE_LABELS={person:'Person',location:'Ort',item:'Gegenstand',faction:'Fraktion',concept:'Konzept'};
+
+export function validEntityTypes(){return Object.keys(ENTITY_SCHEMAS)}
+
+export function getSlotSchema(entityType,slotName){
+const schema=ENTITY_SCHEMAS[entityType];
+return schema?schema[slotName]||null:null;
+}
+
+export function getSlotNames(entityType){
+const schema=ENTITY_SCHEMAS[entityType];
+return schema?Object.keys(schema):[];
+}
+
+// Erstellt leere Slot-Objekte nach Schema
+export function initSlots(entityType){
+const schema=ENTITY_SCHEMAS[entityType];
+if(!schema)return{};
+const slots={};
+for(const[name,def]of Object.entries(schema)){
+if(def.mode==='SINGLE'){
+slots[name]={mode:'SINGLE',value:null,keywords:[],importance:0,stability:1.0,retrievability:1.0,
+emotionalValence:0,emotionalIntensity:0,updatedAt:0,accessCount:0,lastAccessedAt:0,lastReinforcedAt:0,
+pinned:false,userCreated:false};
+}else{
+slots[name]={mode:'ARRAY',entries:[]};
+}}
+return slots;
+}
+
+// Leeren Slot-Eintrag fuer ARRAY erstellen
+export function createSlotEntry(content,opts={}){
+const t=now();
+return{
+id:'s_'+Math.floor(Math.random()*0xFFFFFF).toString(16).padStart(6,'0'),
+content:content.slice(0,500),
+keywords:opts.keywords||[],
+importance:opts.importance||0.5,
+stability:opts.stability||1.0,
+retrievability:1.0,
+emotionalValence:opts.emotionalValence||0,
+emotionalIntensity:opts.emotionalIntensity||0,
+createdAt:t,updatedAt:t,accessCount:0,lastAccessedAt:t,lastReinforcedAt:t,
+sourceMessageIds:opts.sourceMessageIds||[],
+pinned:opts.pinned||false,
+userCreated:opts.userCreated||false,
+relatedEntities:opts.relatedEntities||[],
+};
+}
+
+// ============================================================
+// Entity-Funktionen (teilweise aus v1 uebernommen)
+// ============================================================
+
+// Regelbasierte Entity-Extraktion (Fallback, kein LLM)
 export function extractEntitiesFromText(text,knownEntities=[]){
 const found=new Set;
-// Bekannte Entities matchen
 for(const e of knownEntities){
 const names=[e.name,...(e.aliases||[])];
 for(const n of names){
 if(n.length>1&&text.toLowerCase().includes(n.toLowerCase()))found.add(e.name);
 }}
-// Eigennamen-Heuristik: Woerter mit Grossbuchstabe die nicht am Satzanfang stehen
+// Eigennamen-Heuristik
 const sentences=text.split(/[.!?]+/);
 for(const s of sentences){
 const words=s.trim().split(/\s+/);
@@ -27,7 +120,9 @@ return{
 id:eid(name),name,aliases:[],type,
 characterId:charId,
 firstSeen:now(),lastSeen:now(),
-mentionCount:1,connections:[]
+mentionCount:1,
+connections:[],
+slots:initSlots(type),
 };
 }
 
