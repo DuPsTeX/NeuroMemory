@@ -40,6 +40,15 @@ notes:{mode:'ARRAY',label:'Notizen',desc:'Details, Regeln'},
 },
 };
 
+// Slots die IMMER injiziert werden (Identitaets-Kern), Rest ist kontextuell
+export const ALWAYS_SLOTS={
+person:new Set(['profile']),
+location:new Set(['description']),
+item:new Set(['description','owner']),
+faction:new Set(['description']),
+concept:new Set(['description']),
+};
+
 export const ENTITY_TYPE_ICONS={person:'👤',location:'📍',item:'🗡️',faction:'⚔️',concept:'📚'};
 export const ENTITY_TYPE_LABELS={person:'Person',location:'Ort',item:'Gegenstand',faction:'Fraktion',concept:'Konzept'};
 

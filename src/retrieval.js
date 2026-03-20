@@ -1,6 +1,6 @@
 import{BM25,tokenize,extractKeywords,now,hrs,expDecay,clamp}from'./utils.js';
 import{spreadingActivation}from'./network.js';
-import{extractEntitiesFromText,ENTITY_SCHEMAS,ENTITY_TYPE_ICONS}from'./entities.js';
+import{extractEntitiesFromText,ENTITY_SCHEMAS,ENTITY_TYPE_ICONS,ALWAYS_SLOTS}from'./entities.js';
 import{getAllEntities,getAllSlotEntries,getEntity}from'./store.js';
 
 // ============================================================
@@ -34,11 +34,17 @@ const bm25c=new BM25;
 for(const e of allEntries)bm25c.add(e.entityId+'|'+e.slotName+'|'+(e.entryId||'S'),tokenize(e.content||''));
 const bm25ContentResults=bm25c.search(queryTokens,Math.min(allEntries.length,50));
 
-// BM25-Scores auf Entity-Ebene aggregieren
+// BM25-Scores auf Entity-Ebene UND Slot-Ebene aggregieren
 const entityBm25=new Map;
+const slotBm25=new Map; // entityId -> Map<slotKey, score>
 function addBm25(id,score){
-const entId=id.split('|')[0];
+const parts=id.split('|');
+const entId=parts[0],slotName=parts[1],entryId=parts[2];
 entityBm25.set(entId,(entityBm25.get(entId)||0)+score);
+if(!slotBm25.has(entId))slotBm25.set(entId,new Map);
+const sm=slotBm25.get(entId);
+const key=entryId==='S'?slotName:slotName+'|'+entryId;
+sm.set(key,(sm.get(key)||0)+score);
 }
 for(const r of bm25KwResults)addBm25(r.id,r.score);
 for(const r of bm25ContentResults)addBm25(r.id,r.score*0.6);
@@ -88,7 +94,7 @@ maxRet=Math.max(maxRet,expDecay(hrs(t0-(e.lastReinforcedAt||e.createdAt||t0)),ef
 return{entity:ent,score:maxImp*0.5+maxRet*0.3+(ent.mentionCount>3?0.2:0.1)};
 }).sort((a,b)=>b.score-a.score).slice(0,topK);
 console.log('[NM] retrieval: no query signal, fallback top-'+entScores.length);
-return entScores.map(es=>({entity:es.entity,score:es.score,activation:0.1}));
+return entScores.map(es=>({entity:es.entity,score:es.score,activation:0.1,slotScores:new Map}));
 }
 
 // Phase 4: Spreading Activation ueber Entity-Connections
@@ -128,7 +134,7 @@ maxRet*weights.retrievability+
 maxEmoInt*weights.emotion+
 recencyBoost*weights.recency;
 
-scored.push({entity:ent,score,activation:act,retrievability:maxRet});
+scored.push({entity:ent,score,activation:act,retrievability:maxRet,slotScores:slotBm25.get(ent.id)||new Map});
 }
 
 scored.sort((a,b)=>b.score-a.score);
@@ -145,7 +151,7 @@ if(slot.mode==='ARRAY'&&slot.entries.some(e=>(e.emotionalIntensity||0)>=0.6))ret
 });
 if(candidates.length){
 const pick=candidates[Math.floor(Math.random()*Math.min(candidates.length,5))];
-result.push({entity:pick,score:0.05,activation:0.05,retrievability:0.5,isSurprise:true});
+result.push({entity:pick,score:0.05,activation:0.05,retrievability:0.5,isSurprise:true,slotScores:new Map});
 console.log('[NM] Memory Surprise: entity',pick.name);
 }
 }
@@ -253,25 +259,49 @@ const typeLabel=ent.type.charAt(0).toUpperCase()+ent.type.slice(1);
 const isFull=i<fullCount;
 
 if(isFull){
-// === VOLLER OUTPUT: alle Slots ===
+// === VOLLER OUTPUT: nur relevante Slots ===
 if(!add(`[${typeLabel}: ${ent.name}]\n`))break;
 const schema=ENTITY_SCHEMAS[ent.type]||{};
+const alwaysSet=ALWAYS_SLOTS[ent.type]||new Set;
+const ss=r.slotScores||new Map;
+// Max Slot-Score fuer Normalisierung
+let maxSS=0;
+for(const v of ss.values())if(v>maxSS)maxSS=v;
+const SLOT_THRESHOLD=0.3;
 
-// SINGLE Slots als direkte Zeilen
+// SINGLE Slots — nur ALWAYS, pinned, oder relevant
 for(const[slotName,slotDef]of Object.entries(schema)){
 const slot=ent.slots[slotName];
 if(!slot||slot.mode!=='SINGLE'||!slot.value)continue;
+if(!alwaysSet.has(slotName)&&!slot.pinned){
+const norm=maxSS>0?(ss.get(slotName)||0)/maxSS:0;
+if(norm<SLOT_THRESHOLD)continue;
+}
 if(!add(`${slotDef.label||slotName}: ${slot.value}\n`))break;
 }
 
-// ARRAY Slots als Bullets (max 3 pro Slot)
+// ARRAY Slots — nur wenn mindestens ein Entry relevant (oder ALWAYS/pinned)
 for(const[slotName,slotDef]of Object.entries(schema)){
 const slot=ent.slots[slotName];
 if(!slot||slot.mode!=='ARRAY'||!slot.entries.length)continue;
+const hasPinned=slot.entries.some(e=>e.pinned);
+if(!alwaysSet.has(slotName)&&!hasPinned){
+const anyRelevant=slot.entries.some(e=>{
+const key=slotName+'|'+e.id;
+return maxSS>0&&(ss.get(key)||0)/maxSS>=SLOT_THRESHOLD;
+});
+if(!anyRelevant)continue;
+}
+// Sortiere: pinned → BM25-Relevanz → Importance → Recency
 const entries=[...slot.entries]
-.sort((a,b)=>(b.importance||0)-(a.importance||0)||(b.createdAt||0)-(a.createdAt||0))
+.map(e=>({entry:e,rel:maxSS>0?(ss.get(slotName+'|'+e.id)||0)/maxSS:0}))
+.sort((a,b)=>{
+if(a.entry.pinned!==b.entry.pinned)return b.entry.pinned?1:-1;
+if(Math.abs(a.rel-b.rel)>0.1)return b.rel-a.rel;
+return(b.entry.importance||0)-(a.entry.importance||0)||(b.entry.createdAt||0)-(a.entry.createdAt||0);
+})
 .slice(0,3);
-for(const entry of entries){
+for(const{entry}of entries){
 const emo=emotionLabel(entry);
 if(!add(`* ${slotDef.label||slotName}: ${entry.content}${emo}\n`))break;
 }
