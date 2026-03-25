@@ -162,6 +162,98 @@ return result;
 }
 
 // ============================================================
+// LLM-basierter Relevanz-Filter
+// ============================================================
+
+const RELEVANCE_FILTER_SYSTEM=`You are a story-context analyst for a roleplay memory system.
+Given the current scene and a list of memory entities with their slots:
+Decide which entities and slots are relevant for the AI to write a good response.
+
+Return ONLY a JSON array:
+[{"entity":"Name","relevance":"high"|"medium"|"low","slots":["profile","story",...]}]
+
+Rules:
+- "high": Central to the current scene (full details needed)
+- "medium": Useful background context (abbreviated)
+- "low": Barely relevant (one-liner only)
+- Omit entities that are completely irrelevant
+- For each entity, list ONLY the slot names that matter for the current scene
+- Always include "profile" or "description" for high/medium entities
+- Be selective: a combat scene does not need romance/intimacy slots
+- Maximum response: the JSON array, nothing else`;
+
+function _buildFilterPrompt(results,message){
+let prompt=`Current scene:\n"${message.slice(0,500)}"\n\nEntities:\n`;
+for(const r of results){
+const ent=r.entity;
+const schema=ENTITY_SCHEMAS[ent.type]||{};
+const slotInfo=[];
+for(const[slotName,slotDef]of Object.entries(schema)){
+const slot=ent.slots[slotName];
+if(!slot)continue;
+if(slot.mode==='SINGLE'&&slot.value){
+slotInfo.push(`${slotName}: "${slot.value.substring(0,80)}..."`);
+}else if(slot.mode==='ARRAY'&&slot.entries.length){
+const topEntry=slot.entries.sort((a,b)=>(b.importance||0)-(a.importance||0))[0];
+slotInfo.push(`${slotName}(${slot.entries.length}): "${topEntry.content.substring(0,60)}..."`);
+}}
+if(slotInfo.length){
+prompt+=`- ${ent.name} (${ent.type}): ${slotInfo.join(' | ')}\n`;
+}
+}
+return prompt;
+}
+
+function _parseFilterResponse(raw,results){
+if(!raw)return null;
+let s=raw.trim();
+const cbMatch=s.match(/```(?:json)?\s*([\s\S]*?)```/);
+if(cbMatch)s=cbMatch[1].trim();
+// Reasoning-Tags entfernen
+s=s.replace(/<think>[\s\S]*?<\/think>/g,'').trim();
+const arrMatch=s.match(/\[[\s\S]*\]/);
+if(!arrMatch)return null;
+try{
+const arr=JSON.parse(arrMatch[0]);
+if(!Array.isArray(arr))return null;
+// In Map umwandeln: entityName → {relevance, slots}
+const map=new Map;
+for(const item of arr){
+if(!item.entity)continue;
+const rel=['high','medium','low'].includes(item.relevance)?item.relevance:'medium';
+const slots=Array.isArray(item.slots)?item.slots:[];
+map.set(item.entity.toLowerCase(),{relevance:rel,slots:new Set(slots)});
+}
+return map;
+}catch(e){
+console.error('[NM] relevance filter parse error:',e.message);
+return null;
+}
+}
+
+export async function filterByRelevance(generateFn,results,message){
+if(!generateFn||results.length<2)return null;
+const prompt=_buildFilterPrompt(results,message);
+console.log('[NM] relevance filter: sending',results.length,'entities for analysis');
+try{
+const raw=await generateFn({
+quietPrompt:`${RELEVANCE_FILTER_SYSTEM}\n\n${prompt}`,
+skipWIAN:true,removeReasoning:false,responseLength:1024
+});
+const map=_parseFilterResponse(raw,results);
+if(map){
+console.log('[NM] relevance filter: got',map.size,'relevant entities');
+}else{
+console.warn('[NM] relevance filter: could not parse response, using BM25 fallback');
+}
+return map;
+}catch(e){
+console.error('[NM] relevance filter error:',e.message);
+return null;
+}
+}
+
+// ============================================================
 // Emotionaler Zustand aus Entity-Emotion-Slots
 // ============================================================
 
@@ -326,13 +418,54 @@ return merged;
 // Formatiere Entity-Kontext fuer Prompt-Injektion
 // ============================================================
 
-export function formatEntityContext(results,maxTokens=1500,store=null){
+// Helper: Relevanz-Stufe aus Map holen (prueft Name + Aliases)
+function _getRelevance(r,relevanceMap){
+if(!relevanceMap)return'high';
+const key=r.entity.name.toLowerCase();
+if(relevanceMap.has(key))return relevanceMap.get(key).relevance;
+for(const a of(r.entity.aliases||[])){
+if(relevanceMap.has(a.toLowerCase()))return relevanceMap.get(a.toLowerCase()).relevance;
+}
+return'low';
+}
+
+// Helper: Erlaubte Slots aus Map holen
+function _getAllowedSlots(r,relevanceMap){
+if(!relevanceMap)return null;
+const key=r.entity.name.toLowerCase();
+if(relevanceMap.has(key))return relevanceMap.get(key).slots;
+for(const a of(r.entity.aliases||[])){
+if(relevanceMap.has(a.toLowerCase()))return relevanceMap.get(a.toLowerCase()).slots;
+}
+return new Set;
+}
+
+export function formatEntityContext(results,maxTokens=1500,store=null,relevanceMap=null){
 if(!results.length)return'';
 
 // Dedup vor Formatierung
 const dedupResults=_deduplicateResults(results);
 const surprise=dedupResults.find(r=>r.isSurprise);
-const mainResults=dedupResults.filter(r=>!r.isSurprise);
+let mainResults=dedupResults.filter(r=>!r.isSurprise);
+
+// Wenn LLM-Relevanz vorhanden: nur relevante Entities behalten
+if(relevanceMap&&relevanceMap.size>0){
+mainResults=mainResults.filter(r=>{
+const key=r.entity.name.toLowerCase();
+// Auch Aliases pruefen
+if(relevanceMap.has(key))return true;
+for(const a of(r.entity.aliases||[])){
+if(relevanceMap.has(a.toLowerCase()))return true;
+}
+// Gepinnte immer behalten
+for(const slot of Object.values(r.entity.slots)){
+if(slot.mode==='SINGLE'&&slot.pinned&&slot.value)return true;
+if(slot.mode==='ARRAY'&&slot.entries.some(e=>e.pinned))return true;
+}
+return false;
+});
+console.log(`[NM] LLM filter: ${dedupResults.length-1} → ${mainResults.length} entities`);
+}
 
 let out='';
 let approxTokens=0;
@@ -347,83 +480,75 @@ if(store?.digest?.text){
 if(!add(`[Character Essence]\n${store.digest.text}\n\n`))return out;
 }
 
-// Block 2: Entities nach Typ sortiert, Score absteigend
+// Block 2: Entities sortiert nach LLM-Relevanz (high→medium→low), dann Typ, dann Score
 const typeOrder=['person','location','item','faction','concept'];
+const relOrder={high:0,medium:1,low:2};
 const sorted=[...mainResults].sort((a,b)=>{
+if(relevanceMap){
+const ra=_getRelevance(a,relevanceMap);
+const rb=_getRelevance(b,relevanceMap);
+if(ra!==rb)return(relOrder[ra]||2)-(relOrder[rb]||2);
+}
 const ai=typeOrder.indexOf(a.entity.type);
 const bi=typeOrder.indexOf(b.entity.type);
 if(ai!==bi)return ai-bi;
 return b.score-a.score;
 });
 
-// Top-Entities (score >= 0.6 oder Top 5) bekommen volle Slots,
-// Rest bekommt nur kompakte Einzeiler
-const FULL_THRESHOLD=0.6;
-const MIN_FULL=3;
-const MAX_FULL=6;
-let fullCount=0;
 for(const r of sorted){
-if(r.score>=FULL_THRESHOLD)fullCount++;
-}
-fullCount=Math.max(MIN_FULL,Math.min(MAX_FULL,fullCount));
-
-for(let i=0;i<sorted.length;i++){
-const r=sorted[i];
 const ent=r.entity;
 const typeLabel=ent.type.charAt(0).toUpperCase()+ent.type.slice(1);
-const isFull=i<fullCount;
+const rel=relevanceMap?_getRelevance(r,relevanceMap):'high';
+const allowedSlots=relevanceMap?_getAllowedSlots(r,relevanceMap):null;
 
-if(isFull){
-// === VOLLER OUTPUT: nur relevante Slots ===
+if(rel==='high'){
+// === HIGH: Alle erlaubten Slots, voller Content ===
 if(!add(`[${typeLabel}: ${ent.name}]\n`))break;
 const schema=ENTITY_SCHEMAS[ent.type]||{};
-const alwaysSet=ALWAYS_SLOTS[ent.type]||new Set;
-const ss=r.slotScores||new Map;
-// Max Slot-Score fuer Normalisierung
-let maxSS=0;
-for(const v of ss.values())if(v>maxSS)maxSS=v;
-const SLOT_THRESHOLD=0.3;
-
-// SINGLE Slots — nur ALWAYS, pinned, oder relevant
+// SINGLE Slots
 for(const[slotName,slotDef]of Object.entries(schema)){
 const slot=ent.slots[slotName];
 if(!slot||slot.mode!=='SINGLE'||!slot.value)continue;
-if(!alwaysSet.has(slotName)&&!slot.pinned){
-const norm=maxSS>0?(ss.get(slotName)||0)/maxSS:0;
-if(norm<SLOT_THRESHOLD)continue;
-}
+if(allowedSlots&&!allowedSlots.has(slotName)&&!slot.pinned)continue;
 if(!add(`${slotDef.label||slotName}: ${slot.value}\n`))break;
 }
-
-// ARRAY Slots — nur wenn mindestens ein Entry relevant (oder ALWAYS/pinned)
+// ARRAY Slots
 for(const[slotName,slotDef]of Object.entries(schema)){
 const slot=ent.slots[slotName];
 if(!slot||slot.mode!=='ARRAY'||!slot.entries.length)continue;
-const hasPinned=slot.entries.some(e=>e.pinned);
-if(!alwaysSet.has(slotName)&&!hasPinned){
-const anyRelevant=slot.entries.some(e=>{
-const key=slotName+'|'+e.id;
-return maxSS>0&&(ss.get(key)||0)/maxSS>=SLOT_THRESHOLD;
-});
-if(!anyRelevant)continue;
+if(allowedSlots&&!allowedSlots.has(slotName)){
+if(!slot.entries.some(e=>e.pinned))continue;
 }
-// Sortiere: pinned → BM25-Relevanz → Importance → Recency
 const entries=[...slot.entries]
-.map(e=>({entry:e,rel:maxSS>0?(ss.get(slotName+'|'+e.id)||0)/maxSS:0}))
 .sort((a,b)=>{
-if(a.entry.pinned!==b.entry.pinned)return b.entry.pinned?1:-1;
-if(Math.abs(a.rel-b.rel)>0.1)return b.rel-a.rel;
-return(b.entry.importance||0)-(a.entry.importance||0)||(b.entry.createdAt||0)-(a.entry.createdAt||0);
+if(a.pinned!==b.pinned)return b.pinned?1:-1;
+return(b.importance||0)-(a.importance||0)||(b.createdAt||0)-(a.createdAt||0);
 })
 .slice(0,3);
-for(const{entry}of entries){
+for(const entry of entries){
 const emo=emotionLabel(entry);
 if(!add(`* ${slotDef.label||slotName}: ${entry.content}${emo}\n`))break;
 }
 }
 add('\n');
+}else if(rel==='medium'){
+// === MEDIUM: Nur erlaubte Slots, Content gekuerzt ===
+if(!add(`[${typeLabel}: ${ent.name}]\n`))break;
+const schema=ENTITY_SCHEMAS[ent.type]||{};
+for(const[slotName,slotDef]of Object.entries(schema)){
+const slot=ent.slots[slotName];
+if(!slot)continue;
+if(allowedSlots&&!allowedSlots.has(slotName)&&!(slot.pinned||(slot.entries||[]).some(e=>e.pinned)))continue;
+if(slot.mode==='SINGLE'&&slot.value){
+if(!add(`${slotDef.label||slotName}: ${slot.value.substring(0,150)}\n`))break;
+}else if(slot.mode==='ARRAY'&&slot.entries.length){
+const top=slot.entries.sort((a,b)=>(b.importance||0)-(a.importance||0))[0];
+if(!add(`* ${slotDef.label||slotName}: ${top.content.substring(0,150)}${emotionLabel(top)}\n`))break;
+}
+}
+add('\n');
 }else{
-// === KOMPAKTER OUTPUT: nur Name + wichtigster Inhalt ===
+// === LOW: Nur Name + Einzeiler ===
 const best=_bestSlotSummary(ent);
 if(best){
 if(!add(`[${typeLabel}: ${ent.name}] ${best}\n`))break;

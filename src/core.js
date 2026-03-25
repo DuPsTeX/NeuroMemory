@@ -1,6 +1,6 @@
 import{loadStore,saveStore,createEmpty,getAllEntities,countTotalEntries}from'./store.js';
 import{extractMemories,integrateEntityUpdates}from'./extraction.js';
-import{retrieveEntities,formatEntityContext,reinforceEntities,selectiveReinforce,extractConversationThemes,buildDynamicHint}from'./retrieval.js';
+import{retrieveEntities,formatEntityContext,reinforceEntities,selectiveReinforce,extractConversationThemes,buildDynamicHint,filterByRelevance}from'./retrieval.js';
 import{updateEntityConnections}from'./network.js';
 import{runConsolidation}from'./consolidation.js';
 import{now}from'./utils.js';
@@ -14,6 +14,7 @@ this.charName='';
 this.settings=defaultSettings();
 this.messageCounter=0;
 this.lastInjected=[];
+this.lastRelevanceMap=null;
 this.generating=false;
 this._generateFn=null;
 }
@@ -84,8 +85,8 @@ console.log(`[NM] Consolidation: ${r.forgotten} forgotten, ${r.merged} merged, $
 }
 }
 
-// Vor Generation: relevante Entities abrufen
-retrieveForMessage(message,chatMessages){
+// Vor Generation: relevante Entities abrufen (async wegen LLM-Relevanz-Filter)
+async retrieveForMessage(message,chatMessages){
 if(!this.settings.enabled||!this.store)return{context:'',hint:''};
 
 const themes=chatMessages?extractConversationThemes(chatMessages):[];
@@ -104,14 +105,13 @@ emotionFactor:this.settings.emotionFactor,
 const resultIds=new Set(results.map(r=>r.entity.id));
 for(const ent of Object.values(this.store.entities)){
 if(resultIds.has(ent.id))continue;
-// Entity hat gepinnte Slots/Eintraege → einschliessen
 let hasPinned=false;
 for(const slot of Object.values(ent.slots)){
 if(slot.mode==='SINGLE'&&slot.pinned&&slot.value){hasPinned=true;break}
 if(slot.mode==='ARRAY'&&slot.entries.some(e=>e.pinned)){hasPinned=true;break}
 }
 if(hasPinned){
-results.push({entity:ent,score:1.0,activation:1.0,retrievability:1.0});
+results.push({entity:ent,score:1.0,activation:1.0,retrievability:1.0,slotScores:new Map});
 }
 }
 
@@ -120,7 +120,18 @@ if(!results.length)return{context:'',hint:''};
 reinforceEntities(results);
 this.lastInjected=results;
 
-const context=formatEntityContext(results,this.settings.maxContextTokens,this.store);
+// LLM-Relevanz-Filter: analysiert welche Entities/Slots zur aktuellen Szene passen
+let relevanceMap=null;
+if(this._generateFn&&results.length>=2){
+try{
+relevanceMap=await filterByRelevance(this._generateFn,results,message);
+}catch(e){
+console.warn('[NM] relevance filter failed, using fallback:',e.message);
+}
+}
+
+this.lastRelevanceMap=relevanceMap;
+const context=formatEntityContext(results,this.settings.maxContextTokens,this.store,relevanceMap);
 const hint=this.settings.proactivePrompt?buildDynamicHint(results,this.store):'';
 if(themes.length)console.log('[NM] conversation themes:',themes.join(', '));
 return{context,hint};

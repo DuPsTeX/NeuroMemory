@@ -224,7 +224,7 @@ setStatus('Error: '+e.message,true);
 },1500);
 }
 
-function onGenerateBefore(){
+async function onGenerateBefore(){
 if(!core.settings.enabled)return;
 const c=getCtx();
 if(!c||!c.chat||!c.chat.length)return;
@@ -236,7 +236,7 @@ if(c.chat[i].is_user){lastUserMsg=c.chat[i].mes;break}
 if(!lastUserMsg)return;
 
 const chatMsgs=c.chat.map(m=>({is_user:m.is_user,name:m.name,mes:m.mes}));
-const{context:memContext,hint}=core.retrieveForMessage(lastUserMsg,chatMsgs);
+const{context:memContext,hint}=await core.retrieveForMessage(lastUserMsg,chatMsgs);
 if(!memContext)return;
 
 c.setExtensionPrompt(MODULE_NAME,memContext,1,core.settings.injectionDepth,false,core.settings.injectionRole);
@@ -850,7 +850,7 @@ const results=core.getLastInjected();
 if(!results.length){showDebug('Keine Entities injiziert.');return}
 
 // Exakten injizierten Text generieren (wie er an die KI geht)
-const exactText=formatEntityContext(results,core.settings.maxContextTokens,core.store);
+const exactText=formatEntityContext(results,core.settings.maxContextTokens,core.store,core.lastRelevanceMap);
 
 let html='<h3>Last Injected ('+results.length+' Entities)</h3>';
 
