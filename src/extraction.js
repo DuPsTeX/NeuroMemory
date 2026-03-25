@@ -137,20 +137,62 @@ relatedEntities:Array.isArray(item.relatedEntities)?item.relatedEntities.map(Str
 return results;
 }
 
+// Fuzzy Entity-Suche: findet auch "Bademeisterin Ylva" wenn "Ylva" existiert
+function _findEntityFuzzy(store,name){
+// 1. Exakter Name/Alias Match
+const exact=getEntityByName(store,name);
+if(exact)return exact;
+// 2. Substring-Match: neuer Name enthält bestehenden Namen oder umgekehrt
+const nameLower=name.toLowerCase();
+const nameWords=nameLower.split(/\s+/).filter(w=>w.length>3);
+// Klammer-Inhalt extrahieren: "Brunhilda (Bruni)" → "bruni"
+const parenMatch=name.match(/\(([^)]+)\)/);
+const parenName=parenMatch?parenMatch[1].toLowerCase().trim():null;
+for(const ent of Object.values(store.entities)){
+const entLower=ent.name.toLowerCase();
+// "Ylva" gefunden in "Bademeisterin Ylva" oder umgekehrt
+if(entLower.length>3&&nameLower.includes(entLower))return ent;
+if(nameLower.length>3&&entLower.includes(nameLower))return ent;
+// Klammer-Name matcht: "Brunhilda (Bruni)" → findet "Bruni"
+if(parenName&&parenName.length>2){
+if(entLower===parenName)return ent;
+if(ent.aliases.some(a=>a.toLowerCase()===parenName))return ent;
+}
+// Entity hat Klammer im Namen: "Bruni (Brunhilda)" → Suche "Brunhilda"
+const entParen=ent.name.match(/\(([^)]+)\)/);
+if(entParen){
+const ep=entParen[1].toLowerCase().trim();
+if(ep===nameLower||nameWords.some(w=>w===ep))return ent;
+}
+// Einzelnes Wort des neuen Namens matcht exakt den Entity-Namen
+for(const w of nameWords){
+if(w===entLower)return ent;
+}
+}
+return null;
+}
+
 // Entity-Updates in den Store integrieren (ersetzt altes integrateMemories)
 export function integrateEntityUpdates(store,updates,opts={}){
 const{sourceMessageIds=[]}=opts;
 let added=0,merged=0;
 
 for(const upd of updates){
-// 1. Entity finden oder erstellen
-let ent=getEntityByName(store,upd.entity);
+// 1. Entity finden (exakt oder fuzzy) oder erstellen
+let ent=_findEntityFuzzy(store,upd.entity);
 if(!ent){
 ent=createEntityNode(upd.entity,store.characterId,upd.entityType);
 addEntity(store,ent);
 console.log(`[NM] new entity: ${ent.name} (${upd.entityType})`);
 }else{
 updateEntityMention(ent);
+// Alias hinzufuegen wenn Name anders
+if(ent.name.toLowerCase()!==upd.entity.toLowerCase()){
+const alias=upd.entity.trim();
+if(!ent.aliases.includes(alias)&&!ent.aliases.some(a=>a.toLowerCase()===alias.toLowerCase())){
+ent.aliases.push(alias);
+console.log(`[NM] added alias "${alias}" to entity "${ent.name}"`);
+}}
 // Entity-Typ upgraden wenn concept → spezifischer
 if(ent.type==='concept'&&upd.entityType!=='concept'){
 ent.type=upd.entityType;

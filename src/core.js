@@ -159,7 +159,7 @@ export function defaultSettings(){
 return{
 enabled:true,
 topK:10,
-maxContextTokens:500,
+maxContextTokens:1500,
 maxEntries:500,
 extractEveryN:1,
 extractContextMessages:4,

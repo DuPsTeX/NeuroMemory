@@ -138,7 +138,9 @@ scored.push({entity:ent,score,activation:act,retrievability:maxRet,slotScores:sl
 }
 
 scored.sort((a,b)=>b.score-a.score);
-const result=scored.slice(0,topK);
+// Score-Cutoff: Entities unter Minimum nicht injizieren
+const MIN_INJECT_SCORE=0.4;
+const result=scored.filter(r=>r.score>=MIN_INJECT_SCORE).slice(0,topK);
 
 // Memory Surprise: 15% Chance fuer spontane emotionale Entity
 if(Math.random()<0.15){
@@ -195,6 +197,13 @@ return` | ${intStr} ${valStr}`;
 
 // Bester Slot-Inhalt als Einzeiler (fuer kompakte Darstellung)
 function _bestSlotSummary(ent){
+// Bevorzugt profile/description (Identitaets-Kern)
+const identitySlots=['profile','description'];
+for(const sn of identitySlots){
+const slot=ent.slots[sn];
+if(slot?.mode==='SINGLE'&&slot.value)return slot.value.substring(0,200);
+}
+// Fallback: bester Slot nach Score
 let best=null,bestScore=0;
 for(const[name,slot]of Object.entries(ent.slots)){
 if(slot.mode==='SINGLE'&&slot.value){
@@ -206,18 +215,124 @@ const s=(e.importance||0.5)+(e.emotionalIntensity||0)*0.3;
 if(s>bestScore){bestScore=s;best=e.content}
 }}
 }
-return best?best.substring(0,120):null;
+return best?best.substring(0,200):null;
+}
+
+// ============================================================
+// Entity-Dedup: Duplikate erkennen und zusammenfuehren
+// ============================================================
+
+function _extractNameParts(name){
+// "Brunhilda (Bruni)" → ["brunhilda","bruni"]
+// "Bademeisterin Ylva" → ["bademeisterin","ylva"]
+const parts=[];
+const paren=name.match(/\(([^)]+)\)/);
+if(paren)parts.push(paren[1].toLowerCase().trim());
+const base=name.replace(/\([^)]+\)/,'').trim();
+parts.push(base.toLowerCase());
+// Auch einzelne Woerter > 3 Zeichen (fuer "Bademeisterin Ylva" → "ylva")
+for(const w of base.split(/\s+/)){
+if(w.length>3)parts.push(w.toLowerCase());
+}
+return[...new Set(parts)];
+}
+
+function _areEntityDuplicates(a,b){
+const partsA=_extractNameParts(a.name);
+const partsB=_extractNameParts(b.name);
+// Pruefe ob irgendein Name-Teil von A in B vorkommt oder umgekehrt
+for(const pa of partsA){
+if(pa.length<3)continue;
+for(const pb of partsB){
+if(pb.length<3)continue;
+if(pa===pb)return true;
+if(pa.length>4&&pb.includes(pa))return true;
+if(pb.length>4&&pa.includes(pb))return true;
+}}
+// Auch Aliases pruefen
+const allNamesA=[a.name.toLowerCase(),...(a.aliases||[]).map(x=>x.toLowerCase())];
+const allNamesB=[b.name.toLowerCase(),...(b.aliases||[]).map(x=>x.toLowerCase())];
+for(const na of allNamesA){
+for(const nb of allNamesB){
+if(na===nb)return true;
+}}
+return false;
+}
+
+function _deduplicateResults(results){
+if(results.length<2)return results;
+// Gruppiere Duplikate: erste gefundene Entity wird "Primary"
+const groups=[];// Array von {primary, dupes:[]}
+const used=new Set;
+for(let i=0;i<results.length;i++){
+if(used.has(i))continue;
+const group={primary:results[i],dupes:[]};
+for(let j=i+1;j<results.length;j++){
+if(used.has(j))continue;
+if(_areEntityDuplicates(results[i].entity,results[j].entity)){
+group.dupes.push(results[j]);
+used.add(j);
+}}
+groups.push(group);
+used.add(i);
+}
+// Merge: Primary bekommt den hoechsten Score, Slots werden zusammengefuehrt
+const merged=[];
+for(const g of groups){
+const best=g.primary;
+if(!g.dupes.length){merged.push(best);continue}
+// Hoechsten Score nehmen
+for(const d of g.dupes){
+if(d.score>best.score){best.score=d.score;best.activation=d.activation}
+// Slots von Dupe in Primary mergen
+for(const[slotName,slot]of Object.entries(d.entity.slots)){
+const targetSlot=best.entity.slots[slotName];
+if(!targetSlot)continue;
+if(slot.mode==='SINGLE'&&slot.value){
+if(!targetSlot.value||slot.value.length>targetSlot.value.length){
+targetSlot.value=slot.value;
+targetSlot.keywords=slot.keywords||targetSlot.keywords;
+targetSlot.importance=Math.max(targetSlot.importance||0,slot.importance||0);
+targetSlot.emotionalIntensity=Math.max(targetSlot.emotionalIntensity||0,slot.emotionalIntensity||0);
+targetSlot.emotionalValence=slot.emotionalValence||targetSlot.emotionalValence;
+}}
+if(slot.mode==='ARRAY'&&slot.entries?.length){
+// Entries anhaengen die noch nicht da sind (Content-Dedup)
+for(const entry of slot.entries){
+const isDup=targetSlot.entries?.some(e=>e.content===entry.content);
+if(!isDup)targetSlot.entries.push(entry);
+}}}
+// SlotScores mergen
+if(d.slotScores){
+const bestSS=best.slotScores||new Map;
+for(const[k,v]of d.slotScores){
+bestSS.set(k,Math.max(bestSS.get(k)||0,v));
+}
+best.slotScores=bestSS;
+}
+// Dupe-Namen als Info merken
+const dupeNames=g.dupes.map(d=>d.entity.name).join(', ');
+best._dupeNames=dupeNames;
+}
+merged.push(best);
+}
+if(groups.some(g=>g.dupes.length)){
+console.log(`[NM] dedup: ${results.length} → ${merged.length} entities`);
+}
+return merged;
 }
 
 // ============================================================
 // Formatiere Entity-Kontext fuer Prompt-Injektion
 // ============================================================
 
-export function formatEntityContext(results,maxTokens=500,store=null){
+export function formatEntityContext(results,maxTokens=1500,store=null){
 if(!results.length)return'';
 
-const surprise=results.find(r=>r.isSurprise);
-const mainResults=results.filter(r=>!r.isSurprise);
+// Dedup vor Formatierung
+const dedupResults=_deduplicateResults(results);
+const surprise=dedupResults.find(r=>r.isSurprise);
+const mainResults=dedupResults.filter(r=>!r.isSurprise);
 
 let out='';
 let approxTokens=0;
