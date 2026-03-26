@@ -63,6 +63,12 @@ await saveStore(v2);
 return v2;
 }
 }
+// Store-Dedup: Duplikat-Entities zusammenfuehren
+const dedupCount=deduplicateStoreEntities(data);
+if(dedupCount>0){
+console.log(`[NM] store dedup: merged ${dedupCount} duplicate entities`);
+await saveStore(data);
+}
 return data;
 }
 
@@ -114,10 +120,19 @@ return store.entities[entId]||null;
 
 export function getEntityByName(store,name){
 const lower=name.toLowerCase();
+// Exakter Match (Name oder Alias)
 for(const e of Object.values(store.entities)){
 if(e.name.toLowerCase()===lower)return e;
 if(e.aliases.some(a=>a.toLowerCase()===lower))return e;
 }
+// Fuzzy Match: Name in Klammern oder Teilname > 4 Zeichen
+if(lower.length>4){
+for(const e of Object.values(store.entities)){
+const parts=_extractNameParts(e.name);
+if(parts.some(p=>p.length>4&&(p.includes(lower)||lower.includes(p))))return e;
+const aliasParts=(e.aliases||[]).flatMap(a=>_extractNameParts(a));
+if(aliasParts.some(p=>p.length>4&&(p.includes(lower)||lower.includes(p))))return e;
+}}
 return null;
 }
 
@@ -242,6 +257,145 @@ return v2;
 if(!s.entities)throw new Error('Invalid v2 store format');
 await saveStore(s);
 return s;
+}
+
+// ============================================================
+// Store-Dedup: Duplikat-Entities zusammenfuehren
+// ============================================================
+
+function _extractNameParts(name){
+const parts=[];
+const paren=name.match(/\(([^)]+)\)/);
+if(paren)parts.push(paren[1].toLowerCase().trim());
+const base=name.replace(/\([^)]+\)/,'').trim();
+parts.push(base.toLowerCase());
+for(const w of base.split(/\s+/)){
+if(w.length>3)parts.push(w.toLowerCase());
+}
+return[...new Set(parts)];
+}
+
+function _entitiesAreDuplicates(a,b){
+if(a.type!==b.type)return false;// Nur gleichen Typ mergen
+const partsA=_extractNameParts(a.name);
+const partsB=_extractNameParts(b.name);
+for(const pa of partsA){
+if(pa.length<3)continue;
+for(const pb of partsB){
+if(pb.length<3)continue;
+if(pa===pb)return true;
+if(pa.length>4&&pb.includes(pa))return true;
+if(pb.length>4&&pa.includes(pb))return true;
+}}
+const allA=[a.name.toLowerCase(),...(a.aliases||[]).map(x=>x.toLowerCase())];
+const allB=[b.name.toLowerCase(),...(b.aliases||[]).map(x=>x.toLowerCase())];
+for(const na of allA){for(const nb of allB){if(na===nb)return true}}
+return false;
+}
+
+function _mergeEntityInto(primary,dupe){
+// Aliases: alle Namen des Dupes als Aliases merken
+const allNames=new Set((primary.aliases||[]).map(a=>a.toLowerCase()));
+allNames.add(primary.name.toLowerCase());
+if(!allNames.has(dupe.name.toLowerCase())){
+primary.aliases.push(dupe.name);
+}
+for(const a of(dupe.aliases||[])){
+if(!allNames.has(a.toLowerCase()))primary.aliases.push(a);
+}
+// Timestamps + counts
+primary.firstSeen=Math.min(primary.firstSeen||Infinity,dupe.firstSeen||Infinity);
+primary.lastSeen=Math.max(primary.lastSeen||0,dupe.lastSeen||0);
+primary.mentionCount=(primary.mentionCount||0)+(dupe.mentionCount||0);
+// Connections mergen
+const existingTargets=new Set(primary.connections.map(c=>c.targetId));
+for(const c of(dupe.connections||[])){
+if(c.targetId===primary.id)continue;// Keine Self-Connection
+if(!existingTargets.has(c.targetId)){
+primary.connections.push(c);
+existingTargets.add(c.targetId);
+}
+}
+// Slots mergen
+for(const[slotName,dupeSlot]of Object.entries(dupe.slots)){
+const pSlot=primary.slots[slotName];
+if(!pSlot)continue;
+if(dupeSlot.mode==='SINGLE'&&dupeSlot.value){
+if(!pSlot.value||dupeSlot.value.length>pSlot.value.length){
+pSlot.value=dupeSlot.value;
+pSlot.keywords=dupeSlot.keywords||pSlot.keywords;
+pSlot.importance=Math.max(pSlot.importance||0,dupeSlot.importance||0);
+pSlot.emotionalIntensity=Math.max(pSlot.emotionalIntensity||0,dupeSlot.emotionalIntensity||0);
+pSlot.emotionalValence=dupeSlot.emotionalValence||pSlot.emotionalValence;
+pSlot.updatedAt=Math.max(pSlot.updatedAt||0,dupeSlot.updatedAt||0);
+pSlot.lastReinforcedAt=Math.max(pSlot.lastReinforcedAt||0,dupeSlot.lastReinforcedAt||0);
+}
+}else if(dupeSlot.mode==='ARRAY'&&dupeSlot.entries?.length){
+for(const entry of dupeSlot.entries){
+// Content-Dedup: gleichen Inhalt nicht doppelt
+const isDup=pSlot.entries.some(e=>e.content===entry.content);
+if(!isDup)pSlot.entries.push(entry);
+}
+}
+}
+}
+
+export function deduplicateStoreEntities(store){
+if(!store?.entities)return 0;
+const entities=Object.values(store.entities);
+if(entities.length<2)return 0;
+
+// Sortiere nach mentionCount (haeufigster zuerst = wird Primary)
+entities.sort((a,b)=>(b.mentionCount||0)-(a.mentionCount||0));
+
+const merged=new Set;// IDs die gemergt wurden
+let mergeCount=0;
+
+for(let i=0;i<entities.length;i++){
+if(merged.has(entities[i].id))continue;
+const primary=entities[i];
+for(let j=i+1;j<entities.length;j++){
+if(merged.has(entities[j].id))continue;
+if(_entitiesAreDuplicates(primary,entities[j])){
+console.log(`[NM] dedup: merging "${entities[j].name}" into "${primary.name}"`);
+_mergeEntityInto(primary,entities[j]);
+merged.add(entities[j].id);
+mergeCount++;
+}
+}
+}
+
+// Gemergte Entities entfernen + Connections umleiten
+if(mergeCount>0){
+// Map: gemergte ID → primary ID
+const redirectMap=new Map;
+for(let i=0;i<entities.length;i++){
+if(merged.has(entities[i].id))continue;
+const primary=entities[i];
+for(let j=i+1;j<entities.length;j++){
+if(!merged.has(entities[j].id))continue;
+if(_entitiesAreDuplicates(primary,entities[j])){
+redirectMap.set(entities[j].id,primary.id);
+}
+}}
+// Entities loeschen
+for(const id of merged)delete store.entities[id];
+// Connections umleiten
+for(const ent of Object.values(store.entities)){
+ent.connections=ent.connections.map(c=>{
+if(redirectMap.has(c.targetId))c.targetId=redirectMap.get(c.targetId);
+return c;
+}).filter(c=>c.targetId!==ent.id);// Keine Self-Connections
+// Duplikat-Connections entfernen
+const seen=new Set;
+ent.connections=ent.connections.filter(c=>{
+if(seen.has(c.targetId))return false;
+seen.add(c.targetId);return true;
+});
+}
+}
+
+return mergeCount;
 }
 
 // ============================================================
