@@ -208,7 +208,6 @@ Rules:
 function _buildFilterPrompt(results,message,recentChat,snippetTokens){
 const snippetChars=(snippetTokens||150)*4;
 let prompt='';
-// Chat-Historie als Kontext
 if(recentChat){
 prompt+=`Recent conversation:\n${recentChat}\n\n`;
 }
@@ -216,19 +215,35 @@ prompt+=`Current message:\n"${message.slice(0,snippetChars)}"\n\nEntities:\n`;
 for(const r of results){
 const ent=r.entity;
 const schema=ENTITY_SCHEMAS[ent.type]||{};
+// Kompaktes Format: Name + Typ + max 2 wichtigste Slots (kurz!)
 const slotInfo=[];
+// Identitaets-Slot zuerst (profile/description)
+const identitySlots=['profile','description'];
+for(const sn of identitySlots){
+const slot=ent.slots[sn];
+if(slot?.mode==='SINGLE'&&slot.value){
+slotInfo.push(`${sn}: "${slot.value.substring(0,80)}"`);
+break;
+}
+}
+// Ein weiterer relevanter Slot
 for(const[slotName,slotDef]of Object.entries(schema)){
+if(identitySlots.includes(slotName))continue;
+if(slotInfo.length>=2)break;
 const slot=ent.slots[slotName];
 if(!slot)continue;
 if(slot.mode==='SINGLE'&&slot.value){
-slotInfo.push(`${slotName}: "${slot.value.substring(0,120)}..."`);
+slotInfo.push(`${slotName}: "${slot.value.substring(0,60)}"`);
 }else if(slot.mode==='ARRAY'&&slot.entries.length){
-const topEntry=[...slot.entries].sort((a,b)=>(b.importance||0)-(a.importance||0))[0];
-slotInfo.push(`${slotName}(${slot.entries.length}): "${topEntry.content.substring(0,80)}..."`);
-}}
-if(slotInfo.length){
-prompt+=`- ${ent.name} (${ent.type}): ${slotInfo.join(' | ')}\n`;
+slotInfo.push(`${slotName}(${slot.entries.length})`);
 }
+}
+const slotNames=Object.entries(schema).filter(([n,d])=>{
+const s=ent.slots[n];
+if(!s)return false;
+return(s.mode==='SINGLE'&&s.value)||(s.mode==='ARRAY'&&s.entries.length);
+}).map(([n])=>n);
+prompt+=`- ${ent.name} (${ent.type}) [${slotNames.join(',')}]: ${slotInfo.join(' | ')}\n`;
 }
 return prompt;
 }
@@ -267,7 +282,7 @@ console.log('[NM] relevance filter: sending',results.length,'entities for analys
 try{
 const raw=await generateFn({
 quietPrompt:`${RELEVANCE_FILTER_SYSTEM}\n\n${prompt}`,
-skipWIAN:true,removeReasoning:false,responseLength:1024
+skipWIAN:true,removeReasoning:false,responseLength:2048
 });
 const map=_parseFilterResponse(raw,results);
 if(map){

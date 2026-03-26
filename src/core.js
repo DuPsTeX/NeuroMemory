@@ -117,9 +117,9 @@ results.push({entity:ent,score:1.0,activation:1.0,retrievability:1.0,slotScores:
 
 if(!results.length)return{context:'',hint:''};
 
-// Pre-Filter: begrenzte Kandidaten fuer LLM-Filter (topK * 2 fuer Dedup-Reserve)
+// Pre-Filter: begrenzte Kandidaten fuer LLM-Filter (topK + 5 fuer Dedup-Reserve)
 const topK=this.settings.topK||15;
-const candidateLimit=Math.min(results.length,topK*2);
+const candidateLimit=Math.min(results.length,topK+5);
 const candidates=results.slice(0,candidateLimit);
 console.log(`[NM] retrieval: ${results.length} total → ${candidates.length} candidates for filter (topK=${topK})`);
 
