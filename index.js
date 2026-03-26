@@ -331,6 +331,11 @@ return`
 <label>Injection Depth <input type="number" id="nm_injectionDepth" value="${s.injectionDepth}" min="0" max="100" class="text_pole nm-input"></label>
 
 <hr>
+<h4>Relevanz-Filter</h4>
+<label>Filter-Kontext Nachrichten <input type="number" id="nm_filterContextMessages" value="${s.filterContextMessages}" min="1" max="10" class="text_pole nm-input"></label>
+<label>Filter-Snippet Tokens <input type="number" id="nm_filterSnippetTokens" value="${s.filterSnippetTokens}" min="50" max="500" class="text_pole nm-input"></label>
+
+<hr>
 <h4>Extraction</h4>
 <label>Extract every N messages <input type="number" id="nm_extractEveryN" value="${s.extractEveryN}" min="1" max="20" class="text_pole nm-input"></label>
 <label>Context messages <input type="number" id="nm_extractContextMessages" value="${s.extractContextMessages}" min="2" max="10" class="text_pole nm-input"></label>
@@ -437,7 +442,8 @@ function bindEvents(){
 const on=(id,ev,fn)=>{const el=document.getElementById(id);if(el)el.addEventListener(ev,fn)};
 
 on('nm_enabled','change',e=>{core.settings.enabled=e.target.checked;saveSettings()});
-const nums=['topK','maxContextTokens','injectionDepth','extractEveryN','extractContextMessages',
+const nums=['topK','maxContextTokens','injectionDepth','filterContextMessages','filterSnippetTokens',
+'extractEveryN','extractContextMessages',
 'halfLifeDays','emotionFactor','consolidateEveryN','maxEntries','activationHops','activationThreshold','digestEveryN'];
 for(const n of nums){
 on(`nm_${n}`,'change',e=>{

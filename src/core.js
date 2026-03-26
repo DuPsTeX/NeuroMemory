@@ -77,7 +77,7 @@ finally{this.generating=false}
 // LLM-Relevanz-Filter vorab berechnen fuer naechste Generation
 const lastMsg=chat?.[chat.length-1]?.mes||chat?.[chat.length-2]?.mes||'';
 if(lastMsg){
-await this._runRelevanceFilter(lastMsg);
+await this._runRelevanceFilter(lastMsg,chat);
 }
 
 // Konsolidierung periodisch
@@ -135,7 +135,7 @@ return{context,hint};
 }
 
 // LLM-Relevanz-Filter vorab ausfuehren (nach Extraction, vor naechster Generation)
-async _runRelevanceFilter(lastUserMessage){
+async _runRelevanceFilter(lastUserMessage,chat){
 if(!this._generateFn||!this.store)return;
 const results=retrieveEntities(this.store,lastUserMessage,{
 topK:this.settings.topK,
@@ -147,7 +147,15 @@ emotionFactor:this.settings.emotionFactor,
 });
 if(results.length<2){this.lastRelevanceMap=null;return}
 try{
-this.lastRelevanceMap=await filterByRelevance(this._generateFn,results,lastUserMessage);
+// Chat-Historie fuer Filter-Kontext aufbereiten
+const historyCount=this.settings.filterContextMessages||3;
+const snippetTokens=this.settings.filterSnippetTokens||150;
+const recentChat=(chat||[]).slice(-historyCount).map(m=>{
+const role=m.is_user?'User':'AI';
+const text=(m.mes||'').substring(0,snippetTokens*4);// ~4 chars/token
+return`${role}: ${text}`;
+}).join('\n');
+this.lastRelevanceMap=await filterByRelevance(this._generateFn,results,lastUserMessage,recentChat,snippetTokens);
 }catch(e){
 console.warn('[NM] relevance filter failed:',e.message);
 this.lastRelevanceMap=null;
@@ -204,5 +212,7 @@ injectionRole:0,// SYSTEM
 extractionPrompt:'',// Leer = DEFAULT_EXTRACT_SYSTEM verwenden
 digestEveryN:15,
 proactivePrompt:false,
+filterContextMessages:3,
+filterSnippetTokens:150,
 };
 }

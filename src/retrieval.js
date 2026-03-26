@@ -166,24 +166,31 @@ return result;
 // ============================================================
 
 const RELEVANCE_FILTER_SYSTEM=`You are a story-context analyst for a roleplay memory system.
-Given the current scene and a list of memory entities with their slots:
-Decide which entities and slots are relevant for the AI to write a good response.
+Given the recent conversation history and a list of memory entities with their slots:
+Decide which entities and slots are relevant for the AI to write a good continuation.
 
 Return ONLY a JSON array:
 [{"entity":"Name","relevance":"high"|"medium"|"low","slots":["profile","story",...]}]
 
 Rules:
-- "high": Central to the current scene (full details needed)
-- "medium": Useful background context (abbreviated)
-- "low": Barely relevant (one-liner only)
-- Omit entities that are completely irrelevant
-- For each entity, list ONLY the slot names that matter for the current scene
+- "high": Central to the current scene — actively present, speaking, or directly involved (full details needed)
+- "medium": Useful background context — mentioned, related, or setting context (abbreviated)
+- "low": Barely relevant — exists in the world but not part of the current moment (one-liner only)
+- Omit entities that are completely irrelevant to the current situation
+- For each entity, list ONLY the slot names that matter right now
 - Always include "profile" or "description" for high/medium entities
-- Be selective: a combat scene does not need romance/intimacy slots
+- Be selective: a combat scene does not need romance slots, a shopping scene does not need combat stats
+- Use the full conversation history to understand WHAT is happening, WHO is present, and WHAT topics are active
 - Maximum response: the JSON array, nothing else`;
 
-function _buildFilterPrompt(results,message){
-let prompt=`Current scene:\n"${message.slice(0,500)}"\n\nEntities:\n`;
+function _buildFilterPrompt(results,message,recentChat,snippetTokens){
+const snippetChars=(snippetTokens||150)*4;
+let prompt='';
+// Chat-Historie als Kontext
+if(recentChat){
+prompt+=`Recent conversation:\n${recentChat}\n\n`;
+}
+prompt+=`Current message:\n"${message.slice(0,snippetChars)}"\n\nEntities:\n`;
 for(const r of results){
 const ent=r.entity;
 const schema=ENTITY_SCHEMAS[ent.type]||{};
@@ -192,10 +199,10 @@ for(const[slotName,slotDef]of Object.entries(schema)){
 const slot=ent.slots[slotName];
 if(!slot)continue;
 if(slot.mode==='SINGLE'&&slot.value){
-slotInfo.push(`${slotName}: "${slot.value.substring(0,80)}..."`);
+slotInfo.push(`${slotName}: "${slot.value.substring(0,120)}..."`);
 }else if(slot.mode==='ARRAY'&&slot.entries.length){
-const topEntry=slot.entries.sort((a,b)=>(b.importance||0)-(a.importance||0))[0];
-slotInfo.push(`${slotName}(${slot.entries.length}): "${topEntry.content.substring(0,60)}..."`);
+const topEntry=[...slot.entries].sort((a,b)=>(b.importance||0)-(a.importance||0))[0];
+slotInfo.push(`${slotName}(${slot.entries.length}): "${topEntry.content.substring(0,80)}..."`);
 }}
 if(slotInfo.length){
 prompt+=`- ${ent.name} (${ent.type}): ${slotInfo.join(' | ')}\n`;
@@ -231,10 +238,10 @@ return null;
 }
 }
 
-export async function filterByRelevance(generateFn,results,message){
+export async function filterByRelevance(generateFn,results,message,recentChat,snippetTokens){
 if(!generateFn||results.length<2)return null;
-const prompt=_buildFilterPrompt(results,message);
-console.log('[NM] relevance filter: sending',results.length,'entities for analysis');
+const prompt=_buildFilterPrompt(results,message,recentChat,snippetTokens);
+console.log('[NM] relevance filter: sending',results.length,'entities for analysis, history:',recentChat?'yes':'no');
 try{
 const raw=await generateFn({
 quietPrompt:`${RELEVANCE_FILTER_SYSTEM}\n\n${prompt}`,
