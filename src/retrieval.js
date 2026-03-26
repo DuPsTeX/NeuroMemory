@@ -167,19 +167,20 @@ return result;
 
 const RELEVANCE_FILTER_SYSTEM=`You are a story-context analyst for a roleplay memory system.
 Given the recent conversation history and a list of memory entities with their slots:
-Decide which entities and slots are relevant for the AI to write a good continuation.
+Rate EVERY entity and decide which slots are relevant for the AI to write a good continuation.
 
-Return ONLY a JSON array:
+Return ONLY a JSON array with ALL entities rated:
 [{"entity":"Name","relevance":"high"|"medium"|"low","slots":["profile","story",...]}]
 
 Rules:
+- You MUST rate ALL entities in the list — never omit any
 - "high": Central to the current scene — actively present, speaking, or directly involved (full details needed)
 - "medium": Useful background context — mentioned, related, or setting context (abbreviated)
 - "low": Barely relevant — exists in the world but not part of the current moment (one-liner only)
-- Omit entities that are completely irrelevant to the current situation
 - For each entity, list ONLY the slot names that matter right now
 - Always include "profile" or "description" for high/medium entities
-- Be selective: a combat scene does not need romance slots, a shopping scene does not need combat stats
+- For "low" entities, include at least ["profile"]
+- Be selective with slots: a combat scene does not need romance slots, a shopping scene does not need combat stats
 - Use the full conversation history to understand WHAT is happening, WHO is present, and WHAT topics are active
 - Maximum response: the JSON array, nothing else`;
 
@@ -455,23 +456,14 @@ const dedupResults=_deduplicateResults(results);
 const surprise=dedupResults.find(r=>r.isSurprise);
 let mainResults=dedupResults.filter(r=>!r.isSurprise);
 
-// Wenn LLM-Relevanz vorhanden: nur relevante Entities behalten
+// Log LLM-Filter Status
 if(relevanceMap&&relevanceMap.size>0){
-mainResults=mainResults.filter(r=>{
-const key=r.entity.name.toLowerCase();
-// Auch Aliases pruefen
-if(relevanceMap.has(key))return true;
-for(const a of(r.entity.aliases||[])){
-if(relevanceMap.has(a.toLowerCase()))return true;
+const counts={high:0,medium:0,low:0};
+for(const r of mainResults){
+const rel=_getRelevance(r,relevanceMap);
+counts[rel]=(counts[rel]||0)+1;
 }
-// Gepinnte immer behalten
-for(const slot of Object.values(r.entity.slots)){
-if(slot.mode==='SINGLE'&&slot.pinned&&slot.value)return true;
-if(slot.mode==='ARRAY'&&slot.entries.some(e=>e.pinned))return true;
-}
-return false;
-});
-console.log(`[NM] LLM filter: ${dedupResults.length-1} → ${mainResults.length} entities`);
+console.log(`[NM] LLM filter: ${mainResults.length} entities — ${counts.high} high, ${counts.medium} medium, ${counts.low} low`);
 }
 
 let out='';

@@ -856,16 +856,34 @@ const results=core.getLastInjected();
 if(!results.length){showDebug('Keine Entities injiziert.');return}
 
 // Exakten injizierten Text generieren (wie er an die KI geht)
-const exactText=formatEntityContext(results,core.settings.maxContextTokens,core.store,core.lastRelevanceMap);
+const relevanceMap=core.lastRelevanceMap;
+const exactText=formatEntityContext(results,core.settings.maxContextTokens,core.store,relevanceMap);
 
 let html='<h3>Last Injected ('+results.length+' Entities)</h3>';
 
-// Entity-Liste mit Scores
+// Relevanz-Farben
+const relColors={high:'#4caf50',medium:'#ff9800',low:'#78909c'};
+const relLabels={high:'HIGH',medium:'MED',low:'LOW'};
+
+// Entity-Liste mit Scores + Relevanz
 for(const r of results){
 const ent=r.entity;
 const icon=ENTITY_TYPE_ICONS[ent.type]||'';
+// Relevanz aus Map holen
+let rel='—';
+let relColor='#666';
+if(relevanceMap){
+const key=ent.name.toLowerCase();
+let found=relevanceMap.get(key);
+if(!found){
+for(const a of(ent.aliases||[])){
+found=relevanceMap.get(a.toLowerCase());
+if(found)break;
+}}
+if(found){rel=relLabels[found.relevance]||found.relevance;relColor=relColors[found.relevance]||'#666'}
+}
 html+=`<div class="nm-entity-item nm-entity-type-${ent.type}">
-<div class="nm-entity-header"><span>${icon} ${escHtml(ent.name)}</span> score:${r.score.toFixed(3)} act:${r.activation.toFixed(3)}${r.isSurprise?' ⚡SURPRISE':''}</div></div>`;
+<div class="nm-entity-header"><span>${icon} ${escHtml(ent.name)}</span> <span style="color:${relColor};font-weight:bold;margin:0 6px">${rel}</span> score:${r.score.toFixed(3)} act:${r.activation.toFixed(3)}${r.isSurprise?' ⚡SURPRISE':''}</div></div>`;
 }
 
 // Exakter injizierter Text
