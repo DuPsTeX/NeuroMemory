@@ -117,12 +117,15 @@ results.push({entity:ent,score:1.0,activation:1.0,retrievability:1.0,slotScores:
 
 if(!results.length)return{context:'',hint:''};
 
-reinforceEntities(results);
-this.lastInjected=results;
+// Pre-Filter: begrenzte Kandidaten fuer LLM-Filter (topK * 2 fuer Dedup-Reserve)
+const topK=this.settings.topK||15;
+const candidateLimit=Math.min(results.length,topK*2);
+const candidates=results.slice(0,candidateLimit);
+console.log(`[NM] retrieval: ${results.length} total → ${candidates.length} candidates for filter (topK=${topK})`);
 
 // LLM-Relevanz-Filter JETZT ausfuehren (vor Formatierung, mit aktuellem Kontext)
 let relevanceMap=null;
-if(this._generateFn&&results.length>=2){
+if(this._generateFn&&candidates.length>=2){
 try{
 const historyCount=this.settings.filterContextMessages||3;
 const snippetTokens=this.settings.filterSnippetTokens||150;
@@ -131,15 +134,20 @@ const role=m.is_user?'User':'AI';
 const text=(m.mes||'').substring(0,snippetTokens*4);
 return`${role}: ${text}`;
 }).join('\n');
-relevanceMap=await filterByRelevance(this._generateFn,results,message,recentChat,snippetTokens);
+relevanceMap=await filterByRelevance(this._generateFn,candidates,message,recentChat,snippetTokens);
 }catch(e){
 console.warn('[NM] relevance filter failed:',e.message);
 }
 }
 this.lastRelevanceMap=relevanceMap;
 
-const context=formatEntityContext(results,this.settings.maxContextTokens,this.store,relevanceMap,this.settings.topK);
-const hint=this.settings.proactivePrompt?buildDynamicHint(results,this.store):'';
+reinforceEntities(candidates);
+const context=formatEntityContext(candidates,this.settings.maxContextTokens,this.store,relevanceMap,topK);
+
+// lastInjected: nur die topK die tatsaechlich injiziert werden (nach Dedup)
+this.lastInjected=candidates.slice(0,topK);
+
+const hint=this.settings.proactivePrompt?buildDynamicHint(candidates.slice(0,topK),this.store):'';
 if(themes.length)console.log('[NM] conversation themes:',themes.join(', '));
 return{context,hint};
 }
