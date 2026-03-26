@@ -857,7 +857,7 @@ if(!results.length){showDebug('Keine Entities injiziert.');return}
 
 // Exakten injizierten Text generieren (wie er an die KI geht)
 const relevanceMap=core.lastRelevanceMap;
-const exactText=formatEntityContext(results,core.settings.maxContextTokens,core.store,relevanceMap);
+const exactText=formatEntityContext(results,core.settings.maxContextTokens,core.store,relevanceMap,core.settings.topK);
 
 let html='<h3>Last Injected ('+results.length+' Entities)</h3>';
 

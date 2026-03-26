@@ -138,7 +138,7 @@ console.warn('[NM] relevance filter failed:',e.message);
 }
 this.lastRelevanceMap=relevanceMap;
 
-const context=formatEntityContext(results,this.settings.maxContextTokens,this.store,relevanceMap);
+const context=formatEntityContext(results,this.settings.maxContextTokens,this.store,relevanceMap,this.settings.topK);
 const hint=this.settings.proactivePrompt?buildDynamicHint(results,this.store):'';
 if(themes.length)console.log('[NM] conversation themes:',themes.join(', '));
 return{context,hint};

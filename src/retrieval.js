@@ -139,8 +139,10 @@ scored.push({entity:ent,score,activation:act,retrievability:maxRet,slotScores:sl
 
 scored.sort((a,b)=>b.score-a.score);
 // Score-Cutoff: Entities unter Minimum nicht injizieren
-const MIN_INJECT_SCORE=0.4;
-const result=scored.filter(r=>r.score>=MIN_INJECT_SCORE).slice(0,topK);
+// topK wird NICHT hier angewendet — alle Kandidaten werden an den LLM-Filter weitergegeben
+// Die finale Begrenzung auf topK passiert erst bei der Injection in formatEntityContext()
+const MIN_INJECT_SCORE=0.3;
+const result=scored.filter(r=>r.score>=MIN_INJECT_SCORE);
 
 // Memory Surprise: 15% Chance fuer spontane emotionale Entity
 if(Math.random()<0.15){
@@ -448,7 +450,7 @@ if(relevanceMap.has(a.toLowerCase()))return relevanceMap.get(a.toLowerCase()).sl
 return new Set;
 }
 
-export function formatEntityContext(results,maxTokens=1500,store=null,relevanceMap=null){
+export function formatEntityContext(results,maxTokens=1500,store=null,relevanceMap=null,topK=15){
 if(!results.length)return'';
 
 // Dedup vor Formatierung
@@ -494,7 +496,11 @@ if(ai!==bi)return ai-bi;
 return b.score-a.score;
 });
 
-for(const r of sorted){
+// TopK-Limit: nur die besten N Entities injizieren
+const limited=sorted.slice(0,topK);
+console.log(`[NM] formatEntityContext: ${sorted.length} candidates → ${limited.length} injected (topK=${topK})`);
+
+for(const r of limited){
 const ent=r.entity;
 const typeLabel=ent.type.charAt(0).toUpperCase()+ent.type.slice(1);
 const rel=relevanceMap?_getRelevance(r,relevanceMap):'high';
