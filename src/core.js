@@ -74,12 +74,6 @@ console.log('[NM] No entity updates extracted from this exchange');
 }catch(e){console.error('[NM] extraction error',e)}
 finally{this.generating=false}
 
-// LLM-Relevanz-Filter vorab berechnen fuer naechste Generation
-const lastMsg=chat?.[chat.length-1]?.mes||chat?.[chat.length-2]?.mes||'';
-if(lastMsg){
-await this._runRelevanceFilter(lastMsg,chat);
-}
-
 // Konsolidierung periodisch
 if(this.messageCounter%this.settings.consolidateEveryN===0){
 try{
@@ -91,8 +85,8 @@ console.log(`[NM] Consolidation: ${r.forgotten} forgotten, ${r.merged} merged, $
 }
 }
 
-// Vor Generation: relevante Entities abrufen (synchron — Filter ist vorab gecacht)
-retrieveForMessage(message,chatMessages){
+// Vor Generation: relevante Entities abrufen + LLM-Relevanz-Filter ausfuehren
+async retrieveForMessage(message,chatMessages){
 if(!this.settings.enabled||!this.store)return{context:'',hint:''};
 
 const themes=chatMessages?extractConversationThemes(chatMessages):[];
@@ -126,41 +120,30 @@ if(!results.length)return{context:'',hint:''};
 reinforceEntities(results);
 this.lastInjected=results;
 
-// Gecachte LLM-Relevanz-Map verwenden (wurde in onMessageReceived vorab berechnet)
-const relevanceMap=this.lastRelevanceMap;
+// LLM-Relevanz-Filter JETZT ausfuehren (vor Formatierung, mit aktuellem Kontext)
+let relevanceMap=null;
+if(this._generateFn&&results.length>=2){
+try{
+const historyCount=this.settings.filterContextMessages||3;
+const snippetTokens=this.settings.filterSnippetTokens||150;
+const recentChat=(chatMessages||[]).slice(-historyCount).map(m=>{
+const role=m.is_user?'User':'AI';
+const text=(m.mes||'').substring(0,snippetTokens*4);
+return`${role}: ${text}`;
+}).join('\n');
+relevanceMap=await filterByRelevance(this._generateFn,results,message,recentChat,snippetTokens);
+}catch(e){
+console.warn('[NM] relevance filter failed:',e.message);
+}
+}
+this.lastRelevanceMap=relevanceMap;
+
 const context=formatEntityContext(results,this.settings.maxContextTokens,this.store,relevanceMap);
 const hint=this.settings.proactivePrompt?buildDynamicHint(results,this.store):'';
 if(themes.length)console.log('[NM] conversation themes:',themes.join(', '));
 return{context,hint};
 }
 
-// LLM-Relevanz-Filter vorab ausfuehren (nach Extraction, vor naechster Generation)
-async _runRelevanceFilter(lastUserMessage,chat){
-if(!this._generateFn||!this.store)return;
-const results=retrieveEntities(this.store,lastUserMessage,{
-topK:this.settings.topK,
-maxHops:this.settings.activationHops,
-decayPerHop:0.5,
-activationThreshold:this.settings.activationThreshold,
-halfLifeHours:this.settings.halfLifeDays*24,
-emotionFactor:this.settings.emotionFactor,
-});
-if(results.length<2){this.lastRelevanceMap=null;return}
-try{
-// Chat-Historie fuer Filter-Kontext aufbereiten
-const historyCount=this.settings.filterContextMessages||3;
-const snippetTokens=this.settings.filterSnippetTokens||150;
-const recentChat=(chat||[]).slice(-historyCount).map(m=>{
-const role=m.is_user?'User':'AI';
-const text=(m.mes||'').substring(0,snippetTokens*4);// ~4 chars/token
-return`${role}: ${text}`;
-}).join('\n');
-this.lastRelevanceMap=await filterByRelevance(this._generateFn,results,lastUserMessage,recentChat,snippetTokens);
-}catch(e){
-console.warn('[NM] relevance filter failed:',e.message);
-this.lastRelevanceMap=null;
-}
-}
 
 // Selective Reinforcement nach KI-Antwort
 applySelectiveReinforcement(responseText){
