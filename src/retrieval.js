@@ -1,7 +1,8 @@
-import{BM25,tokenize,extractKeywords,now,hrs,expDecay,clamp}from'./utils.js';
+import{BM25,tokenize,extractKeywords,now,hrs,expDecay,clamp,estimateTokens}from'./utils.js';
 import{spreadingActivation}from'./network.js';
-import{extractEntitiesFromText,ENTITY_SCHEMAS,ENTITY_TYPE_ICONS,ALWAYS_SLOTS}from'./entities.js';
+import{extractEntitiesFromText,ENTITY_SCHEMAS,ENTITY_TYPE_ICONS,ALWAYS_SLOTS,TIER_LABELS}from'./entities.js';
 import{getAllEntities,getAllSlotEntries,getEntity}from'./store.js';
+import{getTemporalContext}from'./timeline.js';
 
 // ============================================================
 // Multi-Signal Retrieval — Entity-zentrisch (v2)
@@ -144,20 +145,38 @@ scored.sort((a,b)=>b.score-a.score);
 const MIN_INJECT_SCORE=0.3;
 const result=scored.filter(r=>r.score>=MIN_INJECT_SCORE);
 
-// Memory Surprise: 15% Chance fuer spontane emotionale Entity
-if(Math.random()<0.15){
-const candidates=entities.filter(ent=>{
-if(result.some(r=>r.entity.id===ent.id))return false;
-for(const slot of Object.values(ent.slots)){
-if(slot.mode==='SINGLE'&&(slot.emotionalIntensity||0)>=0.6)return true;
-if(slot.mode==='ARRAY'&&slot.entries.some(e=>(e.emotionalIntensity||0)>=0.6))return true;
-}return false;
+// Assoziatives Erinnern: Kontext-bewusste Erinnerungen statt Zufall
+const resultIds=new Set(result.map(r=>r.entity.id));
+const associativeRecalls=[];
+for(const r of result){
+if((r.activation||0)<0.5)continue;// Nur stark aktivierte Entities
+for(const[slotName,slot]of Object.entries(r.entity.slots)){
+if(slot.mode!=='ARRAY')continue;
+for(const entry of slot.entries){
+if((entry.emotionalIntensity||0)<0.4)continue;
+for(const relName of(entry.relatedEntities||[])){
+const relEnt=entities.find(e=>e.name.toLowerCase()===relName.toLowerCase()||
+e.aliases.some(a=>a.toLowerCase()===relName.toLowerCase()));
+if(!relEnt||resultIds.has(relEnt.id))continue;
+associativeRecalls.push({
+entity:relEnt,
+trigger:r.entity.name,
+triggerContent:entry.content,
+emotionalIntensity:entry.emotionalIntensity,
 });
-if(candidates.length){
-const pick=candidates[Math.floor(Math.random()*Math.min(candidates.length,5))];
-result.push({entity:pick,score:0.05,activation:0.05,retrievability:0.5,isSurprise:true,slotScores:new Map});
-console.log('[NM] Memory Surprise: entity',pick.name);
+resultIds.add(relEnt.id);
 }
+}
+}
+}
+// Max 2 assoziative Recalls
+for(const ar of associativeRecalls.sort((a,b)=>(b.emotionalIntensity||0)-(a.emotionalIntensity||0)).slice(0,2)){
+result.push({
+entity:ar.entity,score:0.05,activation:0.05,retrievability:0.5,
+isAssociativeRecall:true,recallTrigger:ar.trigger,recallContent:ar.triggerContent,
+slotScores:new Map,
+});
+console.log(`[NM] Associative Recall: ${ar.trigger} → ${ar.entity.name} ("${ar.triggerContent.substring(0,50)}")`);
 }
 
 return result;
@@ -455,8 +474,8 @@ if(!results.length)return'';
 
 // Dedup vor Formatierung
 const dedupResults=_deduplicateResults(results);
-const surprise=dedupResults.find(r=>r.isSurprise);
-let mainResults=dedupResults.filter(r=>!r.isSurprise);
+const associativeRecalls=dedupResults.filter(r=>r.isAssociativeRecall);
+let mainResults=dedupResults.filter(r=>!r.isAssociativeRecall);
 
 // Log LLM-Filter Status
 if(relevanceMap&&relevanceMap.size>0){
@@ -471,7 +490,7 @@ console.log(`[NM] LLM filter: ${mainResults.length} entities — ${counts.high} 
 let out='';
 let approxTokens=0;
 const add=(text)=>{
-const t=Math.ceil(text.length/4);
+const t=estimateTokens(text);
 if(approxTokens+t>maxTokens)return false;
 out+=text;approxTokens+=t;return true;
 };
@@ -569,22 +588,11 @@ if(emotState){
 add(`[${emotState}]\n`);
 }
 
-// Block 4: Sudden Recall (Surprise)
-if(surprise){
-const ent=surprise.entity;
-// Finde den emotionalsten Eintrag
-let bestEntry=null,bestInt=0;
-for(const slot of Object.values(ent.slots)){
-if(slot.mode==='SINGLE'&&(slot.emotionalIntensity||0)>bestInt){
-bestEntry={content:slot.value,emotionalIntensity:slot.emotionalIntensity,emotionalValence:slot.emotionalValence};
-bestInt=slot.emotionalIntensity;
-}else if(slot.mode==='ARRAY'){
-for(const e of slot.entries){
-if((e.emotionalIntensity||0)>bestInt){bestEntry=e;bestInt=e.emotionalIntensity}
-}}}
-if(bestEntry){
-const intStr=bestInt>=0.75?'★★★':bestInt>=0.5?'★★':'★';
-add(`[Sudden Recall] ${intStr} "${bestEntry.content}"${emotionLabel(bestEntry)}\n`);
+// Block 4: Associative Recall (kontext-bewusst statt zufaellig)
+for(const ar of associativeRecalls){
+const content=ar.recallContent||'';
+if(content){
+add(`[Associative Recall: Being near ${ar.recallTrigger} reminds of — "${content}"]\n`);
 }
 }
 
@@ -687,9 +695,9 @@ if(emotState){
 parts.push(`The character's ${emotState.toLowerCase()}`);
 }
 
-const surprise=results.find(r=>r.isSurprise);
-if(surprise){
-parts.push(`An unexpected memory just surfaced — let it subtly color the response`);
+const recalls=results.filter(r=>r.isAssociativeRecall);
+if(recalls.length){
+parts.push(`An associative memory was triggered — let it subtly color the response`);
 }
 
 // Entity-Typ-Hinweise

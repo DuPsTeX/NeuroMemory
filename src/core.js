@@ -5,7 +5,7 @@ import{updateEntityConnections}from'./network.js';
 import{runConsolidation}from'./consolidation.js';
 import{now}from'./utils.js';
 
-// Zentraler Controller - orchestriert alle Subsysteme (v2 Entity-zentrisch)
+// Zentraler Controller - orchestriert alle Subsysteme (v3 mit Tiers, Timeline, Assoziativem Erinnern)
 export class NeuroMemoryCore{
 constructor(){
 this.store=null;
@@ -205,5 +205,22 @@ digestEveryN:15,
 proactivePrompt:false,
 filterContextMessages:3,
 filterSnippetTokens:150,
+// v3: Tier-System
+coreImportanceThreshold:0.85,
+significantImportanceThreshold:0.6,
+// v3: Konsolidierung
+consolidationMode:'smart',// 'smart' (Batch) oder 'legacy'
+maxSlotEntriesBeforeCompress:8,
+wisdomExtractionThreshold:10,
+// v3: Assoziatives Erinnern
+associativeRecallEnabled:true,
+associativeRecallMinEmotion:0.4,
+associativeRecallMaxCount:2,
+// v3: Zeitlinie
+temporalWindow:2,
+// v3: Budget-Injection
+budgetHighPct:55,
+budgetMediumPct:30,
+budgetLowPct:10,
 };
 }

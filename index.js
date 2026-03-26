@@ -1,10 +1,10 @@
 import{NeuroMemoryCore,defaultSettings}from'./src/core.js';
 import{exportStore,importStore,loadStore,deleteStore,setContextGetter,saveStore,addEntity,removeEntity,getEntityByName,addSlotEntry,updateSlotValue,removeSlotEntry,updateSlotEntry,countTotalEntries,getAllEntities}from'./src/store.js';
 import{extractMemories,integrateEntityUpdates,parseEntityUpdates,setExtractionPrompt,getExtractionPrompt,DEFAULT_EXTRACT_SYSTEM}from'./src/extraction.js';
-import{uid,extractKeywords}from'./src/utils.js';
+import{uid,extractKeywords,estimateTokens}from'./src/utils.js';
 import{updateEntityConnections}from'./src/network.js';
 import{formatEntityContext}from'./src/retrieval.js';
-import{ENTITY_SCHEMAS,ENTITY_TYPE_ICONS,createEntityNode,initSlots,createSlotEntry}from'./src/entities.js';
+import{ENTITY_SCHEMAS,ENTITY_TYPE_ICONS,TIER_LABELS,TIER_COLORS,createEntityNode,initSlots,createSlotEntry}from'./src/entities.js';
 
 const MODULE_NAME='neuro-memory';
 const core=new NeuroMemoryCore();
@@ -118,6 +118,15 @@ set('nm_activationHops',s.activationHops);
 set('nm_activationThreshold',s.activationThreshold);
 const cb=document.getElementById('nm_enabled');if(cb)cb.checked=!!s.enabled;
 const ppCb=document.getElementById('nm_proactivePrompt');if(ppCb)ppCb.checked=!!s.proactivePrompt;
+const arCb=document.getElementById('nm_associativeRecallEnabled');if(arCb)arCb.checked=!!s.associativeRecallEnabled;
+const cmSel=document.getElementById('nm_consolidationMode');if(cmSel)cmSel.value=s.consolidationMode||'smart';
+set('nm_coreImportanceThreshold',s.coreImportanceThreshold);
+set('nm_significantImportanceThreshold',s.significantImportanceThreshold);
+set('nm_maxSlotEntriesBeforeCompress',s.maxSlotEntriesBeforeCompress);
+set('nm_wisdomExtractionThreshold',s.wisdomExtractionThreshold);
+set('nm_associativeRecallMinEmotion',s.associativeRecallMinEmotion);
+set('nm_associativeRecallMaxCount',s.associativeRecallMaxCount);
+set('nm_temporalWindow',s.temporalWindow);
 set('nm_digestEveryN',s.digestEveryN??15);
 const promptEl=document.getElementById('nm_extractPrompt');
 if(promptEl){
@@ -294,7 +303,7 @@ return`
 <div id="nm_settings" class="nm-panel">
 <div class="inline-drawer">
 <div class="inline-drawer-toggle inline-drawer-header">
-<b data-i18n="NeuroMemory">NeuroMemory v2</b>
+<b data-i18n="NeuroMemory">NeuroMemory v3</b>
 <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
 </div>
 <div class="inline-drawer-content">
@@ -353,6 +362,30 @@ return`
 <input type="checkbox" id="nm_proactivePrompt" ${s.proactivePrompt?'checked':''}>
 <span style="font-size:.9em">Proaktive Memory-Nutzung</span>
 </label>
+
+<hr>
+<h4>v3: Tier-System</h4>
+<label>Core-Schwelle (Importance) <input type="number" id="nm_coreImportanceThreshold" value="${s.coreImportanceThreshold}" min="0.5" max="1" step="0.05" class="text_pole nm-input"></label>
+<label>Significant-Schwelle <input type="number" id="nm_significantImportanceThreshold" value="${s.significantImportanceThreshold}" min="0.3" max="0.9" step="0.05" class="text_pole nm-input"></label>
+
+<hr>
+<h4>v3: Konsolidierung</h4>
+<label>Modus <select id="nm_consolidationMode" class="text_pole nm-input">
+<option value="smart" ${s.consolidationMode==='smart'?'selected':''}>Smart (Batch)</option>
+<option value="legacy" ${s.consolidationMode==='legacy'?'selected':''}>Legacy (Paarweise)</option>
+</select></label>
+<label>Batch-Kompression ab Einträgen <input type="number" id="nm_maxSlotEntriesBeforeCompress" value="${s.maxSlotEntriesBeforeCompress}" min="4" max="20" class="text_pole nm-input"></label>
+<label>Wisdom-Extraktion ab Plot-Einträgen <input type="number" id="nm_wisdomExtractionThreshold" value="${s.wisdomExtractionThreshold}" min="5" max="30" class="text_pole nm-input"></label>
+
+<hr>
+<h4>v3: Assoziatives Erinnern</h4>
+<label class="checkbox_label" style="margin-top:4px">
+<input type="checkbox" id="nm_associativeRecallEnabled" ${s.associativeRecallEnabled?'checked':''}>
+<span style="font-size:.9em">Assoziatives Erinnern aktiviert</span>
+</label>
+<label>Min. Emotion für Trigger <input type="number" id="nm_associativeRecallMinEmotion" value="${s.associativeRecallMinEmotion}" min="0.1" max="0.9" step="0.1" class="text_pole nm-input"></label>
+<label>Max. Assoziative Recalls <input type="number" id="nm_associativeRecallMaxCount" value="${s.associativeRecallMaxCount}" min="1" max="5" class="text_pole nm-input"></label>
+<label>Temporales Fenster <input type="number" id="nm_temporalWindow" value="${s.temporalWindow}" min="0" max="5" class="text_pole nm-input"></label>
 
 <hr>
 <h4>Debug &amp; Data</h4>
@@ -444,7 +477,9 @@ const on=(id,ev,fn)=>{const el=document.getElementById(id);if(el)el.addEventList
 on('nm_enabled','change',e=>{core.settings.enabled=e.target.checked;saveSettings()});
 const nums=['topK','maxContextTokens','injectionDepth','filterContextMessages','filterSnippetTokens',
 'extractEveryN','extractContextMessages',
-'halfLifeDays','emotionFactor','consolidateEveryN','maxEntries','activationHops','activationThreshold','digestEveryN'];
+'halfLifeDays','emotionFactor','consolidateEveryN','maxEntries','activationHops','activationThreshold','digestEveryN',
+'coreImportanceThreshold','significantImportanceThreshold','maxSlotEntriesBeforeCompress','wisdomExtractionThreshold',
+'associativeRecallMinEmotion','associativeRecallMaxCount','temporalWindow'];
 for(const n of nums){
 on(`nm_${n}`,'change',e=>{
 const v=parseFloat(e.target.value);
@@ -453,6 +488,8 @@ if(!isNaN(v)){core.settings[n]=v;saveSettings()}
 }
 
 on('nm_proactivePrompt','change',e=>{core.settings.proactivePrompt=e.target.checked;saveSettings()});
+on('nm_consolidationMode','change',e=>{core.settings.consolidationMode=e.target.value;saveSettings()});
+on('nm_associativeRecallEnabled','change',e=>{core.settings.associativeRecallEnabled=e.target.checked;saveSettings()});
 on('nm_testExtraction','click',()=>doTestExtraction());
 on('nm_showEntities','click',()=>{_browserFilter={type:'all',search:''};_browserShowCount=50;showEntityBrowser()});
 on('nm_importCard','click',()=>doImportFromCard());
@@ -619,8 +656,10 @@ if(!slot)continue;
 
 if(slot.mode==='SINGLE'){
 const hasValue=!!slot.value;
+const sTier=slot.tier||'episodic';
+const sTierBadge=hasValue?`<span class="nm-tier-badge" style="background:${TIER_COLORS[sTier]||'#6bcb77'};color:#000;font-size:.7em;padding:1px 4px;border-radius:3px;margin-left:4px">${TIER_LABELS[sTier]||'EPI'}</span>`:'';
 html+=`<div class="nm-slot-section nm-slot-single">
-<div class="nm-slot-header"><span class="nm-slot-label">${slotDef.label}</span><span class="nm-slot-mode">SINGLE</span>
+<div class="nm-slot-header"><span class="nm-slot-label">${slotDef.label}</span><span class="nm-slot-mode">SINGLE</span>${sTierBadge}
 ${hasValue?`<button class="nm-action-btn" data-action="edit-single" data-entid="${escHtml(ent.id)}" data-slot="${slotName}" title="Bearbeiten">✏️</button>`:''}
 ${hasValue&&slot.pinned?'<span class="nm-pin-badge">📌</span>':''}
 </div>`;
@@ -637,8 +676,11 @@ for(const entry of slot.entries){
 const pinBadge=entry.pinned?'📌 ':'';
 const emoInt=(entry.emotionalIntensity||0);
 const emoBadge=emoInt>=0.75?'⚡⚡ ':emoInt>=0.5?'⚡ ':'';
+const tier=entry.tier||'episodic';
+const tierBadge=`<span class="nm-tier-badge" style="background:${TIER_COLORS[tier]||'#6bcb77'};color:#000;font-size:.7em;padding:1px 4px;border-radius:3px;margin-right:4px">${TIER_LABELS[tier]||'EPI'}</span>`;
+const arcBadge=entry.storyArc?`<span class="nm-arc-badge" style="font-size:.7em;opacity:.7;margin-right:4px">🎭${escHtml(entry.storyArc)}</span>`:'';
 html+=`<div class="nm-slot-entry" data-entryid="${escHtml(entry.id)}">
-<div class="nm-entry-content">${pinBadge}${emoBadge}${escHtml(entry.content)}</div>
+<div class="nm-entry-content">${tierBadge}${arcBadge}${pinBadge}${emoBadge}${escHtml(entry.content)}</div>
 <div class="nm-entry-actions">
 <button class="nm-action-btn" data-action="pin-entry" data-entid="${escHtml(ent.id)}" data-slot="${slotName}" data-entryid="${escHtml(entry.id)}" title="${entry.pinned?'Unpin':'Pin'}">${entry.pinned?'📌':'📍'}</button>
 <button class="nm-action-btn" data-action="edit-entry" data-entid="${escHtml(ent.id)}" data-slot="${slotName}" data-entryid="${escHtml(entry.id)}" title="Bearbeiten">✏️</button>
@@ -882,12 +924,13 @@ if(found)break;
 }}
 if(found){rel=relLabels[found.relevance]||found.relevance;relColor=relColors[found.relevance]||'#666'}
 }
+const recallTag=r.isAssociativeRecall?` 🔗 RECALL via ${escHtml(r.recallTrigger||'')}`:'';
 html+=`<div class="nm-entity-item nm-entity-type-${ent.type}">
-<div class="nm-entity-header"><span>${icon} ${escHtml(ent.name)}</span> <span style="color:${relColor};font-weight:bold;margin:0 6px">${rel}</span> score:${r.score.toFixed(3)} act:${r.activation.toFixed(3)}${r.isSurprise?' ⚡SURPRISE':''}</div></div>`;
+<div class="nm-entity-header"><span>${icon} ${escHtml(ent.name)}</span> <span style="color:${relColor};font-weight:bold;margin:0 6px">${rel}</span> score:${r.score.toFixed(3)} act:${r.activation.toFixed(3)}${recallTag}</div></div>`;
 }
 
 // Exakter injizierter Text
-html+=`<h3>Exakter Injection-Text (${exactText.length} chars, ~${Math.ceil(exactText.length/4)} tokens)</h3>`;
+html+=`<h3>Exakter Injection-Text (${exactText.length} chars, ~${estimateTokens(exactText)} tokens)</h3>`;
 html+=`<pre class="nm-injection-preview">${escHtml(exactText)}</pre>`;
 
 showPopup('Last Injected Entities',html);
@@ -1105,7 +1148,7 @@ const json=await exportStore(charId);
 const blob=new Blob([json],{type:'application/json'});
 const url=URL.createObjectURL(blob);
 const a=document.createElement('a');
-a.href=url;a.download=`neuromemory_v2_${charId}.json`;
+a.href=url;a.download=`neuromemory_v3_${charId}.json`;
 a.click();URL.revokeObjectURL(url);
 showDebug('Exported successfully');
 }
@@ -1261,7 +1304,7 @@ return ctx.generateQuietPrompt(opts);
 
 jQuery(async function(){
 try{
-console.log('[NM] init start (v2.0)');
+console.log('[NM] init start (v3.0)');
 const c=getCtx();
 if(!c){console.error('[NM] Could not get context');return}
 
@@ -1291,6 +1334,6 @@ await core.loadCharacter(charId,getCharName(c));
 }
 updateUI();
 
-console.log('[NM] NeuroMemory v2.0 initialized');
+console.log('[NM] NeuroMemory v3.0 initialized');
 }catch(e){console.error('[NM] INIT ERROR',e)}
 });

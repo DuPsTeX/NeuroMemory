@@ -1,5 +1,5 @@
 import{now}from'./utils.js';
-import{createEntityNode,initSlots,createSlotEntry,ENTITY_SCHEMAS}from'./entities.js';
+import{createEntityNode,initSlots,createSlotEntry,ENTITY_SCHEMAS,computeTier}from'./entities.js';
 
 // Context-Getter wird von index.js gesetzt
 let _getCtx=null;
@@ -59,9 +59,14 @@ if(!data.meta?.schemaVersion||data.meta.schemaVersion<2){
 if(data.memories){
 console.log('[NM] migrating v1 → v2...');
 const v2=migrateV1toV2(data);
-await saveStore(v2);
-return v2;
+data=v2;
 }
+}
+// v2 → v3 Migration
+if((data.meta?.schemaVersion||1)<3){
+console.log('[NM] migrating v2 → v3...');
+migrateV2toV3(data);
+await saveStore(data);
 }
 // Store-Dedup: Duplikat-Entities zusammenfuehren
 const dedupCount=deduplicateStoreEntities(data);
@@ -76,7 +81,7 @@ export function createEmpty(charId,charName){
 return{
 characterId:charId,characterName:charName,
 entities:{},
-meta:{totalSlotEntries:0,lastConsolidation:now(),schemaVersion:2},
+meta:{totalSlotEntries:0,lastConsolidation:now(),schemaVersion:3},
 digest:null,
 };
 }
@@ -396,6 +401,54 @@ seen.add(c.targetId);return true;
 }
 
 return mergeCount;
+}
+
+// ============================================================
+// v2 → v3 Migration: Tiers, Zeitlinie, Story-Arcs, Wisdom
+// ============================================================
+
+function migrateV2toV3(store){
+let upgradedEntries=0;
+let wisdomAdded=0;
+
+for(const ent of Object.values(store.entities)){
+// 1. Person-Entities: wisdom-Slot hinzufuegen falls fehlend
+if(ent.type==='person'&&!ent.slots.wisdom){
+ent.slots.wisdom={mode:'SINGLE',value:null,keywords:[],importance:0,stability:1.0,retrievability:1.0,
+emotionalValence:0,emotionalIntensity:0,updatedAt:0,accessCount:0,lastAccessedAt:0,lastReinforcedAt:0,
+pinned:false,userCreated:false,tier:'episodic'};
+wisdomAdded++;
+}
+
+for(const[slotName,slot]of Object.entries(ent.slots)){
+if(slot.mode==='SINGLE'){
+// Tier hinzufuegen + berechnen
+if(!slot.tier){
+slot.tier=computeTier(slot);
+upgradedEntries++;
+}
+}else if(slot.mode==='ARRAY'){
+// sequenceIndex basierend auf createdAt setzen
+const sorted=[...slot.entries].sort((a,b)=>(a.createdAt||0)-(b.createdAt||0));
+for(let i=0;i<sorted.length;i++){
+const entry=sorted[i];
+if(entry.sequenceIndex===undefined||entry.sequenceIndex===0){
+entry.sequenceIndex=i+1;
+}
+if(!entry.storyArc&&entry.storyArc!==null){
+entry.storyArc=null;
+}
+if(!entry.tier){
+entry.tier=computeTier(entry);
+}
+upgradedEntries++;
+}
+}
+}
+}
+
+store.meta.schemaVersion=3;
+console.log(`[NM] v2→v3 migration: ${upgradedEntries} entries upgraded, ${wisdomAdded} wisdom slots added`);
 }
 
 // ============================================================

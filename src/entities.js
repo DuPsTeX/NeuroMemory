@@ -8,6 +8,7 @@ person:{
 profile:{mode:'SINGLE',label:'Profil',desc:'Name, Rolle, Level, HP, MP, Klasse, Faehigkeiten'},
 appearance:{mode:'SINGLE',label:'Aussehen',desc:'Physische Beschreibung'},
 personality:{mode:'SINGLE',label:'Persoenlichkeit',desc:'Charakterzuege, Vorlieben, Eigenheiten'},
+wisdom:{mode:'SINGLE',label:'Weisheit',desc:'Was der Charakter gelernt hat (auto-generiert)'},
 relations:{mode:'ARRAY',label:'Beziehungen',desc:'Beziehungen zu anderen Entities'},
 emotions:{mode:'ARRAY',label:'Emotionen',desc:'Emotional bedeutsame Erlebnisse'},
 plot:{mode:'ARRAY',label:'Story',desc:'Plot-Ereignisse mit dieser Person'},
@@ -49,6 +50,26 @@ faction:new Set(['description']),
 concept:new Set(['description']),
 };
 
+// ============================================================
+// Memory Tiers: Core > Significant > Episodic
+// ============================================================
+export const MEMORY_TIERS={core:'core',significant:'significant',episodic:'episodic'};
+export const TIER_LABELS={core:'CORE',significant:'SIG',episodic:'EPI'};
+export const TIER_COLORS={core:'#ff6b6b',significant:'#ffd93d',episodic:'#6bcb77'};
+
+export function computeTier(entry,settings={}){
+const imp=entry.importance||0;
+const emo=entry.emotionalIntensity||0;
+const stab=entry.stability||1;
+const acc=entry.accessCount||0;
+const coreImp=settings.coreImportanceThreshold||0.85;
+const sigImp=settings.significantImportanceThreshold||0.6;
+if(entry.pinned||entry.userCreated)return'core';
+if(imp>=coreImp||emo>=0.8||stab>=5.0)return'core';
+if(imp>=sigImp||emo>=0.5||stab>=2.5||acc>=5)return'significant';
+return'episodic';
+}
+
 export const ENTITY_TYPE_ICONS={person:'👤',location:'📍',item:'🗡️',faction:'⚔️',concept:'📚'};
 export const ENTITY_TYPE_LABELS={person:'Person',location:'Ort',item:'Gegenstand',faction:'Fraktion',concept:'Konzept'};
 
@@ -73,7 +94,7 @@ for(const[name,def]of Object.entries(schema)){
 if(def.mode==='SINGLE'){
 slots[name]={mode:'SINGLE',value:null,keywords:[],importance:0,stability:1.0,retrievability:1.0,
 emotionalValence:0,emotionalIntensity:0,updatedAt:0,accessCount:0,lastAccessedAt:0,lastReinforcedAt:0,
-pinned:false,userCreated:false};
+pinned:false,userCreated:false,tier:'episodic'};
 }else{
 slots[name]={mode:'ARRAY',entries:[]};
 }}
@@ -97,6 +118,9 @@ sourceMessageIds:opts.sourceMessageIds||[],
 pinned:opts.pinned||false,
 userCreated:opts.userCreated||false,
 relatedEntities:opts.relatedEntities||[],
+tier:opts.tier||'episodic',
+sequenceIndex:opts.sequenceIndex||0,
+storyArc:opts.storyArc||null,
 };
 }
 

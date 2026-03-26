@@ -1,6 +1,7 @@
 import{uid,now,tokenize,cosineSim,extractKeywords}from'./utils.js';
-import{extractEntitiesFromText,createEntityNode,updateEntityMention,createSlotEntry,getSlotSchema,initSlots,ENTITY_SCHEMAS}from'./entities.js';
+import{extractEntitiesFromText,createEntityNode,updateEntityMention,createSlotEntry,getSlotSchema,initSlots,ENTITY_SCHEMAS,computeTier}from'./entities.js';
 import{addEntity,getEntity,getEntityByName,addSlotEntry,updateSlotValue,getAllEntities}from'./store.js';
+import{nextSequenceIndex}from'./timeline.js';
 import{eid}from'./utils.js';
 
 export const DEFAULT_EXTRACT_SYSTEM=`You are an entity-centric memory extraction system for a roleplay conversation.
@@ -15,6 +16,7 @@ Return a JSON array of entity updates. Each object:
 - "emotionalIntensity": number (0.0 to 1.0)
 - "importance": number (0.0 to 1.0)
 - "relatedEntities": string[] (other entity names mentioned in this content)
+- "storyArc": string|null (name of the current story arc if this is a plot event, e.g. "Dungeon der Schatten", null if not part of an arc)
 
 Allowed slots per entity type:
 - person: profile, appearance, personality, relations, emotions, plot, sexual, notes
@@ -140,6 +142,7 @@ emotionalValence:typeof item.emotionalValence==='number'?Math.max(-1,Math.min(1,
 emotionalIntensity:typeof item.emotionalIntensity==='number'?Math.max(0,Math.min(1,item.emotionalIntensity)):0,
 importance:typeof item.importance==='number'?Math.max(0,Math.min(1,item.importance)):0.5,
 relatedEntities:Array.isArray(item.relatedEntities)?item.relatedEntities.map(String).slice(0,10):[],
+storyArc:typeof item.storyArc==='string'?item.storyArc.slice(0,100):null,
 });
 }
 return results;
@@ -261,10 +264,13 @@ break;
 }
 }
 if(!isDuplicate){
+const seqIdx=nextSequenceIndex(ent,slotName);
+const tier=computeTier({importance:upd.importance,emotionalIntensity:upd.emotionalIntensity,stability:1,accessCount:0});
 const entry=createSlotEntry(upd.content,{
 keywords,importance:upd.importance,
 emotionalValence:upd.emotionalValence,emotionalIntensity:upd.emotionalIntensity,
 sourceMessageIds,relatedEntities:upd.relatedEntities,
+sequenceIndex:seqIdx,storyArc:upd.storyArc||null,tier,
 });
 addSlotEntry(store,ent.id,slotName,entry);
 added++;

@@ -63,3 +63,11 @@ return denom?inter/denom:0;
 
 export function clamp(v,lo=0,hi=1){return _M(lo,_N(hi,v))}
 export function expDecay(t,stability,factor=720){return _E(-t/(stability*factor))}
+
+// Bessere Token-Schaetzung: Wortbasiert statt text.length/4
+export function estimateTokens(text){
+if(!text)return 0;
+// ~1.3 tokens pro Wort fuer Deutsch/Englisch Mix
+const words=text.split(/\s+/).filter(w=>w.length>0);
+return Math.ceil(words.length*1.3);
+}
