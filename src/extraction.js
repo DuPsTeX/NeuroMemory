@@ -40,9 +40,17 @@ let _extractSystem=DEFAULT_EXTRACT_SYSTEM;
 export function setExtractionPrompt(p){_extractSystem=p&&p.trim()?p.trim():DEFAULT_EXTRACT_SYSTEM;}
 export function getExtractionPrompt(){return _extractSystem;}
 
-export function buildExtractionPrompt(messages,maxMessages=4){
+export function buildExtractionPrompt(messages,maxMessages=4,store=null){
 const recent=messages.slice(-maxMessages);
-let prompt='Extract entity information from this conversation excerpt:\n\n';
+let prompt='';
+// Bestehende Entity-Namen mitgeben um Duplikate zu vermeiden
+if(store?.entities){
+const names=Object.values(store.entities).map(e=>e.name).slice(0,50);
+if(names.length){
+prompt+=`Known entities (use these exact names, do NOT create variants):\n${names.join(', ')}\n\n`;
+}
+}
+prompt+='Extract entity information from this conversation excerpt:\n\n';
 for(const m of recent){
 const role=m.is_user?'User':'Character';
 prompt+=`${role} (${m.name}): ${m.mes}\n\n`;
@@ -50,12 +58,12 @@ prompt+=`${role} (${m.name}): ${m.mes}\n\n`;
 return prompt;
 }
 
-export async function extractMemories(generateFn,messages,charId,maxMessages=4){
+export async function extractMemories(generateFn,messages,charId,maxMessages=4,store=null){
 if(messages.length<2){
 console.log('[NM] extractMemories: skip, messages.length=',messages.length);
 return[];
 }
-const prompt=buildExtractionPrompt(messages,maxMessages);
+const prompt=buildExtractionPrompt(messages,maxMessages,store);
 console.log('[NM] extraction prompt built, length:',prompt.length,'chars');
 let raw;
 try{
@@ -266,10 +274,11 @@ console.log(`[NM] added ${ent.name}.${slotName}: "${upd.content.substring(0,50)}
 
 // 4. Inter-Entity-Connections aus relatedEntities
 for(const relName of upd.relatedEntities){
-let relEnt=getEntityByName(store,relName);
+let relEnt=_findEntityFuzzy(store,relName);
 if(!relEnt){
 relEnt=createEntityNode(relName,store.characterId,'concept');
 addEntity(store,relEnt);
+console.log(`[NM] new related entity: ${relEnt.name} (concept)`);
 }
 // Bidirektionale Verbindung
 const hasConn=ent.connections.find(c=>c.targetId===relEnt.id);

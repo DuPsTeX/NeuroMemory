@@ -59,7 +59,7 @@ try{
 console.log('[NM] calling extractMemories...');
 const updates=await extractMemories(
 this._generateFn,chat,this.charId,
-this.settings.extractContextMessages
+this.settings.extractContextMessages,this.store
 );
 console.log('[NM] extractMemories returned:',updates.length,'updates');
 if(updates.length){

@@ -263,7 +263,7 @@ if(!core._generateFn){setStatus('Error: Kein AI-Modell',true);return}
 
 const chatSnapshot=c.chat.map(m=>({is_user:m.is_user,name:m.name,mes:m.mes}));
 try{
-const updates=await extractMemories(core._generateFn,chatSnapshot,core.charId,core.settings.extractContextMessages);
+const updates=await extractMemories(core._generateFn,chatSnapshot,core.charId,core.settings.extractContextMessages,core.store);
 if(updates.length){
 const{added,merged}=integrateEntityUpdates(core.store,updates);
 updateEntityConnections(core.store);
@@ -974,7 +974,7 @@ const origPrompt=getExtractionPrompt();
 setExtractionPrompt(CARD_EXTRACT_SYSTEM);
 try{
 const fakeChat=[{is_user:true,name:'System',mes:'Analyze this character description:'},{is_user:false,name:char.name,mes:cardText}];
-const updates=await extractMemories(core._generateFn,fakeChat,core.charId,2);
+const updates=await extractMemories(core._generateFn,fakeChat,core.charId,2,core.store);
 setExtractionPrompt(origPrompt);
 if(!updates.length){setStatus('Keine Entity-Updates extrahiert',true);return}
 // Hohe Stabilität für Card-Imports
@@ -1005,7 +1005,7 @@ if(!core.store||!core.charId||!core._generateFn){setStatus('Kein Charakter/AI-Mo
 setStatus('Importiere aus Text...');
 const fakeChat=[{is_user:true,name:'System',mes:'Analyze this text:'},{is_user:false,name:core.charName||'Character',mes:text}];
 try{
-const updates=await extractMemories(core._generateFn,fakeChat,core.charId,2);
+const updates=await extractMemories(core._generateFn,fakeChat,core.charId,2,core.store);
 if(!updates.length){setStatus('Keine Updates extrahiert',true);return}
 integrateEntityUpdates(core.store,updates);
 updateEntityConnections(core.store);
@@ -1056,7 +1056,7 @@ return`[${title}]\n${e.content}`;
 
 const fakeChat=[{is_user:true,name:'System',mes:'Analyze the following lorebook entries:'},{is_user:false,name:'Lorebook',mes:batchText}];
 try{
-const updates=await extractMemories(core._generateFn,fakeChat,core.charId,2);
+const updates=await extractMemories(core._generateFn,fakeChat,core.charId,2,core.store);
 if(updates.length){
 integrateEntityUpdates(core.store,updates);
 totalUpdates+=updates.length;
@@ -1189,7 +1189,7 @@ const start=Math.max(0,msgIdx-1);
 const end=Math.min(c.chat.length,msgIdx+2);
 const chatSlice=c.chat.slice(start,end).map(m=>({is_user:m.is_user,name:m.name,mes:m.mes}));
 try{
-const updates=await extractMemories(core._generateFn,chatSlice,core.charId,chatSlice.length);
+const updates=await extractMemories(core._generateFn,chatSlice,core.charId,chatSlice.length,core.store);
 if(updates.length){
 integrateEntityUpdates(core.store,updates);
 updateEntityConnections(core.store);
